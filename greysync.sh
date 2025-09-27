@@ -1,4 +1,7 @@
 #!/bin/bash
+# ==========================================================
+# GreySync Protect Installer v1.0
+# ==========================================================
 
 RED="\033[1;31m"
 GREEN="\033[1;32m"
@@ -6,13 +9,13 @@ CYAN="\033[1;36m"
 YELLOW="\033[1;33m"
 RESET="\033[0m"
 BOLD="\033[1m"
-VERSION="1.3"
+VERSION="1.0"
 
 clear
 echo -e "${CYAN}${BOLD}"
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║         SYAH NIH ANJING        ║"
-echo "║                    Version $VERSION                       ║"
+echo "║                   GreySync Protect                    ║"
+echo "║                      Version $VERSION                  ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
 
@@ -21,9 +24,11 @@ echo -e "${YELLOW}[2]${RESET} Restore dari Backup & Build Panel"
 echo -e "${YELLOW}[3]${RESET} Pasang Protect Admin"
 read -p "$(echo -e "${CYAN}Pilih opsi [1/2/3]: ${RESET}")" OPSI
 
+# === Lokasi file penting Panel ===
 CONTROLLER_USER="/var/www/pterodactyl/app/Http/Controllers/Admin/UserController.php"
 SERVICE_SERVER="/var/www/pterodactyl/app/Services/Servers/ServerDeletionService.php"
 
+# ----------------------------------------------------------
 if [ "$OPSI" = "1" ]; then
     read -p "$(echo -e "${CYAN}Masukkan User ID Admin Utama (contoh: 1): ${RESET}")" ADMIN_ID
 
@@ -38,7 +43,7 @@ if [ "$OPSI" = "1" ]; then
     in_func == 1 && /^\s*{/ {
         print;
         print "        if ($request->user()->id !== " admin_id ") {";
-        print "            throw new DisplayException(\"LU NGAPAIN TOLOL?PROTECT BY SYAH'"$VERSION"')\");";
+        print "            throw new DisplayException(\"Akses ditolak! Proteksi GreySync v'"$VERSION"')\");";
         print "        }";
         in_func = 0; next;
     }
@@ -51,9 +56,7 @@ if [ "$OPSI" = "1" ]; then
     cp "$SERVICE_SERVER" "${SERVICE_SERVER}.bak"
 
     awk '
-BEGIN {
-    added = 0
-}
+BEGIN { added = 0 }
 {
     print
     if (!added && $0 ~ /^namespace Pterodactyl\\Services\\Servers;/) {
@@ -72,7 +75,7 @@ BEGIN {
         print;
         print "        \$user = Auth::user();";
         print "        if (\$user && \$user->id !== " admin_id ") {";
-        print "            throw new DisplayException(\"Mau delet server orang lu bego? protect by syah'"$VERSION"')\");";
+        print "            throw new DisplayException(\"Akses ditolak! Proteksi GreySync v'"$VERSION"')\");";
         print "        }";
         in_func = 0; next;
     }
@@ -92,8 +95,9 @@ BEGIN {
     yarn add cross-env >/dev/null
     yarn build:production --progress
 
-    echo -e "${GREEN}🎉 Protect V$VERSION & Build Panel berhasil dipasang.${RESET}"
+    echo -e "${GREEN}🎉 Proteksi GreySync v$VERSION & Build Panel berhasil dipasang.${RESET}"
 
+# ----------------------------------------------------------
 elif [ "$OPSI" = "2" ]; then
     echo -e "${YELLOW}♻ Memulihkan dari backup...${RESET}"
     [ -f "${CONTROLLER_USER}.bak" ] && cp "${CONTROLLER_USER}.bak" "$CONTROLLER_USER" && \
@@ -110,8 +114,9 @@ elif [ "$OPSI" = "2" ]; then
 
     echo -e "${GREEN}✅ Restore & build selesai.${RESET}"
 
+# ----------------------------------------------------------
 elif [ "$OPSI" = "3" ]; then
-    bash <(curl -s https://raw.githubusercontent.com/syahrill11/protect.js/main/ireng.sh)
+    bash <(curl -s https://raw.githubusercontent.com/greysyncx/protect.js/main/grey.sh)
 
 else
     echo -e "${RED}❌ Opsi tidak valid.${RESET}"
