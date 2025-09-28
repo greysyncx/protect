@@ -1,15 +1,8 @@
+# simpan script
+sudo tee /root/greysync_fixed.sh > /dev/null <<'SH'
 #!/bin/bash
-# GreySync Protect - All-in-one (middleware + controller/service patches)
-# Versi: 1.3 (fix middleware check, clean patch functions)
-#
-# Usage:
-#   greysync.sh           # default = install
-#   greysync.sh install
-#   greysync.sh uninstall
-#   greysync.sh restore
-#   greysync.sh adminpatch <ADMIN_ID>   # apply admin ID to patched controllers (optional)
-#   greysync.sh adminrestore            # restore controller backups
-
+# GreySync Protect - robust fix (no perl escaping issues)
+# Versi: 1.4-fixed
 ROOT="/var/www/pterodactyl"
 MIDDLEWARE="$ROOT/app/Http/Middleware/GreySyncProtect.php"
 KERNEL="$ROOT/app/Http/Kernel.php"
@@ -19,7 +12,6 @@ VIEW="$ROOT/resources/views/errors/protect.blade.php"
 LOG="/var/log/greysync_protect.log"
 BACKUP_DIR="$ROOT/greysync_backups_$(date +%s)"
 
-# Controller / service targets to patch
 USER_CONTROLLER="$ROOT/app/Http/Controllers/Admin/UserController.php"
 SERVER_SERVICE="$ROOT/app/Services/Servers/ServerDeletionService.php"
 ADMIN_CONTROLLERS=(
@@ -28,25 +20,22 @@ ADMIN_CONTROLLERS=(
   "$ROOT/app/Http/Controllers/Admin/Settings/IndexController.php"
 )
 
-# Colors
+# colors
 RED="\033[1;31m"; GREEN="\033[1;32m"; YELLOW="\033[1;33m"; CYAN="\033[1;36m"; RESET="\033[0m"
 
 log() { echo -e "$1"; echo -e "$(date '+%F %T') $1" >> "$LOG"; }
 
-# detect running php-fpm service name
 detect_php_fpm() {
   local svc
   svc=$(systemctl list-units --type=service --all | grep -oE 'php[0-9]+(\.[0-9]+)?-fpm' | head -n1)
   echo "${svc:-php8.3-fpm}"
 }
 
-# safe php lint check for a file
 php_check() {
   php -l "$1" >/dev/null 2>&1
   return $?
 }
 
-# backup a file
 backup_file() {
   local src="$1"
   if [[ -f "$src" ]]; then
@@ -56,50 +45,50 @@ backup_file() {
   fi
 }
 
-# restore backups
-restore_backups() {
-  if [[ ! -d "$BACKUP_DIR" ]]; then
-    log "${YELLOW}No backup dir: $BACKUP_DIR (nothing to restore)${RESET}"
-    return 1
+restore_file_from_backup() {
+  local src="$1"
+  if [[ -f "$BACKUP_DIR/${src#$ROOT/}.bak" ]]; then
+    cp -f "$BACKUP_DIR/${src#$ROOT/}.bak" "$src"
+    log "${GREEN}restored $src from backup${RESET}"
   fi
-  log "${CYAN}Restoring backups from $BACKUP_DIR...${RESET}"
-  find "$BACKUP_DIR" -type f -name "*.bak" | while read -r f; do
-    target="$ROOT/${f#$BACKUP_DIR/}"
-    target="${target%.bak}"
-    mkdir -p "$(dirname "$target")"
-    cp -f "$f" "$target"
-    log "${GREEN}restored $target${RESET}"
-  done
-  fix_laravel
-  return 0
 }
 
-# insert Kernel middleware
 insert_kernel_middleware() {
   if [[ ! -f "$KERNEL" ]]; then log "${RED}Kernel.php not found: $KERNEL${RESET}"; return 1; fi
-  if grep -q "\\\\App\\\\Http\\\\Middleware\\\\GreySyncProtect" "$KERNEL" 2>/dev/null; then
-    log "${YELLOW}Middleware already present in Kernel.php (skip)${RESET}"; return 0
+  # only insert once
+  if grep -q "\\\\App\\\\Http\\\\Middleware\\\\GreySyncProtect::class" "$KERNEL" 2>/dev/null || grep -q "GreySyncProtect::class" "$KERNEL" 2>/dev/null; then
+    log "${YELLOW}Kernel already contains GreySyncProtect${RESET}"
+    return 0
   fi
   backup_file "$KERNEL"
-  LINE=$(grep -Fn "'web' => [" "$KERNEL" | cut -d: -f1 | head -n1)
+  # find 'web' middleware array line and insert next line
+  LINE=$(grep -Fn "'web' => [" "$KERNEL" 2>/dev/null | cut -d: -f1 | head -n1)
   if [[ -z "$LINE" ]]; then
-    log "${YELLOW}Couldn't find 'web' middleware array; skipping kernel injection${RESET}"
+    # fallback: try to find middlewareGroups array start
+    LINE=$(grep -Fn "protected \\$middlewareGroups" "$KERNEL" 2>/dev/null | cut -d: -f1 | head -n1)
+  fi
+  if [[ -z "$LINE" ]]; then
+    log "${YELLOW}Couldn't find web middleware array; skipping kernel injection${RESET}"
     return 0
   fi
   awk -v n=$((LINE+1)) 'NR==n{print "        \\App\\Http\\Middleware\\GreySyncProtect::class,"}1' "$KERNEL" > "$KERNEL.tmp" && mv "$KERNEL.tmp" "$KERNEL"
-  php_check "$KERNEL" || { log "${RED}Kernel.php syntax error, restoring backup${RESET}"; cp -f "$BACKUP_DIR/${KERNEL#$ROOT/}.bak" "$KERNEL"; return 1; }
+  if ! php_check "$KERNEL"; then
+    log "${RED}Kernel syntax error after injection, restoring backup${RESET}"
+    restore_file_from_backup "$KERNEL"
+    return 1
+  fi
   log "${GREEN}Injected middleware into Kernel.php${RESET}"
+  return 0
 }
 
-# remove Kernel middleware
 remove_kernel_middleware() {
   [[ -f "$KERNEL" ]] && sed -i '/GreySyncProtect::class/d' "$KERNEL"
   log "${GREEN}Removed GreySyncProtect entries from Kernel.php (if any)${RESET}"
 }
 
-# write middleware file
 write_middleware_file() {
   mkdir -p "$(dirname "$MIDDLEWARE")"
+  backup_file "$MIDDLEWARE"
   cat > "$MIDDLEWARE" <<'PHP'
 <?php
 namespace App\Http\Middleware;
@@ -141,13 +130,20 @@ class GreySyncProtect {
     }
 }
 PHP
-  php_check "$MIDDLEWARE" || { log "${RED}Middleware file syntax error${RESET}"; return 1; }
+  chown --no-dereference www-data:www-data "$MIDDLEWARE" 2>/dev/null || true
+  chmod 644 "$MIDDLEWARE" 2>/dev/null || true
+  if ! php_check "$MIDDLEWARE"; then
+    log "${RED}Middleware file syntax error after write${RESET}"
+    restore_file_from_backup "$MIDDLEWARE"
+    return 1
+  fi
   log "${GREEN}Middleware file written${RESET}"
+  return 0
 }
 
-# write error view
 write_error_view() {
   mkdir -p "$(dirname "$VIEW")"
+  backup_file "$VIEW"
   cat > "$VIEW" <<'BLADE'
 <!doctype html><html><head><meta charset="utf-8">
 <title>GreySync Protect</title>
@@ -157,28 +153,32 @@ write_error_view() {
 <small>⿻ GreySync Protect</small></div>
 </body></html>
 BLADE
+  chown --no-dereference www-data:www-data "$VIEW" 2>/dev/null || true
+  chmod 644 "$VIEW" 2>/dev/null || true
   log "${GREEN}Error view written${RESET}"
 }
 
-# clear cache & restart
 fix_laravel() {
   cd "$ROOT" || return 1
-  php artisan config:clear >/dev/null 2>&1
-  php artisan cache:clear >/dev/null 2>&1
-  php artisan route:clear >/dev/null 2>&1
-  php artisan view:clear >/dev/null 2>&1
+  php artisan config:clear >/dev/null 2>&1 || true
+  php artisan cache:clear >/dev/null 2>&1 || true
+  php artisan route:clear >/dev/null 2>&1 || true
+  php artisan view:clear >/dev/null 2>&1 || true
+  composer dump-autoload --no-dev -o >/dev/null 2>&1 || true
   chown -R www-data:www-data "$ROOT"
   chmod -R 755 "$ROOT/storage" "$ROOT/bootstrap/cache"
-  systemctl restart nginx >/dev/null 2>&1
-  systemctl restart "$(detect_php_fpm)" >/dev/null 2>&1
+  systemctl restart nginx >/dev/null 2>&1 || true
+  systemctl restart "$(detect_php_fpm)" >/dev/null 2>&1 || true
   log "${GREEN}Laravel cache/perm fixed and services restarted${RESET}"
 }
 
-# ---------- PATCH: UserController ----------
+# patch user controller (insert inside delete method)
 patch_user_controller() {
-  if [[ ! -f "$USER_CONTROLLER" ]]; then log "${YELLOW}UserController not found (skip)${RESET}"; return 1; fi
+  [[ -f "$USER_CONTROLLER" ]] || { log "${YELLOW}UserController not found (skip)${RESET}"; return 1; }
   backup_file "$USER_CONTROLLER"
-  grep -q "GREYSYNC_PROTECT_USER" "$USER_CONTROLLER" && { log "${YELLOW}UserController already patched${RESET}"; return 0; }
+  if grep -q "GREYSYNC_PROTECT_USER" "$USER_CONTROLLER"; then
+    log "${YELLOW}UserController already patched (skip)${RESET}"; return 0
+  fi
   awk 'BEGIN{patched=0}
 /public function delete\(/ {print; infunc=1; next}
 infunc==1 && /^[[:space:]]*{/ && patched==0 {
@@ -187,17 +187,25 @@ infunc==1 && /^[[:space:]]*{/ && patched==0 {
   print "        $user = \\Illuminate\\Support\\Facades\\Auth::user();";
   print "        if (!$user || $user->id !== (int)\\json_decode(file_get_contents(storage_path(\"app/idprotect.json\")), true)[\"superAdminId\"]) {";
   print "            throw new \\Pterodactyl\\Exceptions\\DisplayException(\"⛔ Akses ditolak (GreySync Protect)\");";
-  print "        }"; patched=1; next }
+  print "        }";
+  patched=1; next
+}
 {print}' "$USER_CONTROLLER" > "$USER_CONTROLLER.tmp" && mv "$USER_CONTROLLER.tmp" "$USER_CONTROLLER"
-  php_check "$USER_CONTROLLER" || { cp -f "$BACKUP_DIR/${USER_CONTROLLER#$ROOT/}.bak" "$USER_CONTROLLER"; return 2; }
+  if ! php_check "$USER_CONTROLLER"; then
+    log "${RED}UserController syntax error after patch, restoring backup${RESET}"
+    restore_file_from_backup "$USER_CONTROLLER"
+    return 2
+  fi
   log "${GREEN}Patched UserController${RESET}"
 }
 
-# ---------- PATCH: ServerDeletionService ----------
+# patch server deletion service
 patch_server_service() {
-  if [[ ! -f "$SERVER_SERVICE" ]]; then log "${YELLOW}ServerDeletionService not found (skip)${RESET}"; return 1; fi
+  [[ -f "$SERVER_SERVICE" ]] || { log "${YELLOW}ServerDeletionService not found (skip)${RESET}"; return 1; }
   backup_file "$SERVER_SERVICE"
-  grep -q "GREYSYNC_PROTECT_SERVER" "$SERVER_SERVICE" && { log "${YELLOW}ServerDeletionService already patched${RESET}"; return 0; }
+  if grep -q "GREYSYNC_PROTECT_SERVER" "$SERVER_SERVICE"; then
+    log "${YELLOW}ServerDeletionService already patched (skip)${RESET}"; return 0
+  fi
   awk 'BEGIN{patched=0}
 /public function handle\(/ {print; infunc=1; next}
 infunc==1 && /^[[:space:]]*{/ && patched==0 {
@@ -206,54 +214,98 @@ infunc==1 && /^[[:space:]]*{/ && patched==0 {
   print "        $user = \\Illuminate\\Support\\Facades\\Auth::user();";
   print "        if ($user && $user->id !== (int)\\json_decode(file_get_contents(storage_path(\"app/idprotect.json\")), true)[\"superAdminId\"]) {";
   print "            throw new \\Pterodactyl\\Exceptions\\DisplayException(\"⛔ Akses ditolak (GreySync Protect)\");";
-  print "        }"; patched=1; next }
+  print "        }";
+  patched=1; next
+}
 {print}' "$SERVER_SERVICE" > "$SERVER_SERVICE.tmp" && mv "$SERVER_SERVICE.tmp" "$SERVER_SERVICE"
-  php_check "$SERVER_SERVICE" || { cp -f "$BACKUP_DIR/${SERVER_SERVICE#$ROOT/}.bak" "$SERVER_SERVICE"; return 2; }
+  if ! php_check "$SERVER_SERVICE"; then
+    log "${RED}ServerDeletionService syntax error after patch, restoring backup${RESET}"
+    restore_file_from_backup "$SERVER_SERVICE"
+    return 2
+  fi
   log "${GREEN}Patched ServerDeletionService${RESET}"
 }
 
-# ---------- PATCH: Admin Controllers ----------
+# patch admin controllers using a safe PHP helper to avoid escaping problems
 patch_admin_controllers() {
   local admin_id="${1:-1}"
+  # create temp php helper
+  helper="/tmp/greysync_admin_patch_$$.php"
+  cat > "$helper" <<'PHPH'
+<?php
+// args: file adminId
+if ($argc < 3) {
+    fwrite(STDERR,"need args\n");
+    exit(1);
+}
+$file = $argv[1];
+$admin = intval($argv[2]);
+if (!is_file($file)) { echo "NOFILE\n"; exit(2); }
+$orig = file_get_contents($file);
+if (strpos($orig, "GREYSYNC_PROTECT_ADMIN") !== false) { echo "SKIP\n"; exit(0); }
+// ensure use Auth line exists after namespace
+if (strpos($orig, "Illuminate\\Support\\Facades\\Auth") === false) {
+    $orig = preg_replace('/(namespace\\s+[^{;]+;\\s*)/m', "$1\nuse Illuminate\\Support\\Facades\\Auth;\n", $orig, 1);
+}
+// insert protection inside first public function index(...)
+$pattern = '/public\\s+function\\s+index\\s*\\([^\\)]*\\)\\s*\\{/m';
+if (preg_match($pattern, $orig, $m, PREG_OFFSET_CAPTURE)) {
+    $pos = $m[0][1] + strlen($m[0][0]);
+    $injection = "\n        // GREYSYNC_PROTECT_ADMIN: block for non-superadmin\n        \$user = Auth::user();\n        if (!\$user || \$user->id != $admin) { abort(403, \"⛔ Akses ditolak (GreySync Protect)\"); }\n";
+    $new = substr($orig,0,$pos) . $injection . substr($orig,$pos);
+    file_put_contents($file, $new);
+    echo "PATCHED\n";
+    exit(0);
+} else {
+    echo "NOINDEX\n";
+    exit(3);
+}
+PHPH
+
+  # run helper for each admin controller
   for ctrl in "${ADMIN_CONTROLLERS[@]}"; do
-    [[ ! -f "$ctrl" ]] && { log "${YELLOW}Not found: $ctrl${RESET}"; continue; }
+    if [[ ! -f "$ctrl" ]]; then
+      log "${YELLOW}Admin controller not found (skip): $ctrl${RESET}"
+      continue
+    fi
     backup_file "$ctrl"
-    grep -q "GREYSYNC_PROTECT_ADMIN" "$ctrl" && { log "${YELLOW}Already patched: $ctrl${RESET}"; continue; }
-    perl -0777 -pe "
-      my \$admin = $admin_id;
-      if (/namespace\s+[^\r\n]+;\s*/s) {
-        if (!/use\s+Illuminate\\\\Support\\\\Facades\\\\Auth;/) {
-          s/namespace\s+[^\r\n]+;\s*/\$&\nuse Illuminate\\\\Support\\\\Facades\\\\Auth;\n/;
-        }
-      }
-      s/(public function index\([^\)]*\)\s*\{\s*)/\$1\n        \/\/ GREYSYNC_PROTECT_ADMIN\n        \$user = Auth::user();\n        if (!\$user || \$user->id != \$admin) { abort(403, \"⛔ Akses ditolak (GreySync Protect)\"); }\n/eg;
-    " "$ctrl" > "$ctrl.tmp" && mv "$ctrl.tmp" "$ctrl"
-    php_check "$ctrl" || { cp -f "$BACKUP_DIR/${ctrl#$ROOT/}.bak" "$ctrl"; continue; }
-    sed -i '1i// GREYSYNC_PROTECT_ADMIN' "$ctrl"
-    log "${GREEN}Patched admin controller: $ctrl${RESET}"
+    php "$helper" "$ctrl" "$admin_id" >/tmp/greysync_admin_patch_out 2>&1 || true
+    out=$(cat /tmp/greysync_admin_patch_out || true)
+    if echo "$out" | grep -q "PATCHED"; then
+      if ! php_check "$ctrl"; then
+        log "${RED}Syntax error in $ctrl after patch, restoring backup${RESET}"
+        restore_file_from_backup "$ctrl"
+        continue
+      fi
+      # mark file
+      sed -i '1i// GREYSYNC_PROTECT_ADMIN' "$ctrl"
+      log "${GREEN}Patched admin controller: $ctrl${RESET}"
+    else
+      log "${YELLOW}Admin patch helper result for $ctrl: $out${RESET}"
+    fi
   done
+  rm -f "$helper" /tmp/greysync_admin_patch_out
 }
 
-# ---------- Restore controllers ----------
 restore_patched_controllers() {
   for ctrl in "${ADMIN_CONTROLLERS[@]}" "$USER_CONTROLLER" "$SERVER_SERVICE"; do
-    [[ -f "$BACKUP_DIR/${ctrl#$ROOT/}.bak" ]] && cp -f "$BACKUP_DIR/${ctrl#$ROOT/}.bak" "$ctrl"
+    restore_file_from_backup "$ctrl"
   done
   fix_laravel
 }
 
-# ---------- Main ops ----------
 install_all() {
   mkdir -p "$BACKUP_DIR"
   insert_kernel_middleware
-  write_middleware_file
-  [[ ! -f "$MIDDLEWARE" ]] && { log "${RED}Middleware missing after write${RESET}"; return 1; }
+  write_middleware_file || { log "${RED}Failed to write middleware, aborting install${RESET}"; return 1; }
+  # sanity: if middleware missing abort
+  [[ -f "$MIDDLEWARE" ]] || { log "${RED}Middleware missing after write, aborting${RESET}"; return 1; }
   write_error_view
   echo '{ "status": "on" }' > "$STORAGE"
   echo '{ "superAdminId": 1 }' > "$IDPROTECT"
-  patch_user_controller
-  patch_server_service
-  patch_admin_controllers 1
+  patch_user_controller || log "${YELLOW}UserController patch skipped/failed${RESET}"
+  patch_server_service || log "${YELLOW}ServerDeletionService patch skipped/failed${RESET}"
+  patch_admin_controllers 1 || log "${YELLOW}Admin controllers patch skipped/failed${RESET}"
   fix_laravel
   log "${GREEN}Full install finished (protect active).${RESET}"
 }
@@ -266,12 +318,12 @@ uninstall_all() {
   log "${GREEN}Uninstall finished.${RESET}"
 }
 
-# CLI
 case "$1" in
   install|"") install_all ;;
   uninstall) uninstall_all ;;
-  restore) restore_backups ;;
+  restore) restore_patched_controllers ;;
   adminpatch) [[ -z "$2" ]] && { echo "Usage: $0 adminpatch <ADMIN_ID>"; exit 1; }; patch_admin_controllers "$2"; fix_laravel ;;
   adminrestore) restore_patched_controllers ;;
-  *) echo -e "${CYAN}GreySync Protect v1.3${RESET}"; echo "Usage: $0 {install|uninstall|restore|adminpatch <id>|adminrestore}"; exit 1 ;;
+  *) echo "Usage: $0 {install|uninstall|restore|adminpatch <id>|adminrestore}"; exit 1 ;;
 esac
+SH
