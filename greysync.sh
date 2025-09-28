@@ -255,18 +255,7 @@ infunc==1 && /^[[:space:]]*{/ && patched==0 {
   patched=1;
   next
 }
-{ print } END{ if(patched==0) exit 0 }' "$SERVER_SERVICE" > "$SERVER_SERVICE.tmp" && mv "$SERVER_SERVICE.tmp" "$SERVER_SERVICE"
-
-  if ! php_check "$SERVER_SERVICE"; then
-    log "${RED}Patch ServerDeletionService caused syntax error, restoring backup${RESET}"
-    cp -f "$BACKUP_DIR/${SERVER_SERVICE#$ROOT/}.bak" "$SERVER_SERVICE" 2>/dev/null || true
-    return 2
-  fi
-  log "${GREEN}Patched ServerDeletionService (anti delete)${RESET}"
-}
-
-# ---------- PATCH: Admin Controllers (Node, Nest, Settings) ----------
-patch_admin_controllers() {
+{ print } END{ if(papatch_admin_controllers() {
   local admin_id="${1:-1}"
   mkdir -p "$BACKUP_DIR"
   for ctrl in "${ADMIN_CONTROLLERS[@]}"; do
@@ -281,43 +270,41 @@ patch_admin_controllers() {
       continue
     fi
 
-    # Add use Auth; ensure it exists and insert check in public function index()
-    awk -v admin_id="$admin_id" '
-    BEGIN{in_namespace=0; inserted_use=0; in_func=0; patched=0}
-    /^namespace / { print; next }
-    /^use / && !inserted_use {
-      print
-      next
-    }
-    # print file but capture namespace header to insert uses
-    { print }
-    ' "$ctrl" > "$ctrl.tmp" # baseline copy; we'll do safer approach below
-
-    # safer approach: insert use Illuminate\Support\Facades\Auth; after namespace line if not present
-    perl -0777 -pe '
-      BEGIN{$admin=shift @ARGV}
+    # --- gunakan perl untuk inject ---
+    perl -0777 -pe "
+      my \$admin = $admin_id;
+      # tambahkan use Auth kalau belum ada
       if (/namespace\s+[^\r\n]+;\s*/s) {
-        $ns=$&;
-        if ($_ !~ /use\s+Illuminate\\\Support\\\Facades\\\Auth;/) {
-          s/namespace\s+[^\r\n]+;\s*/$&\nuse Illuminate\\\Support\\\Facades\\\Auth;\n/;
+        my \$ns = \$&;
+        if (!/use\s+Illuminate\\\\Support\\\\Facades\\\\Auth;/) {
+          s/namespace\s+[^\r\n]+;\s*/\$&\nuse Illuminate\\\\Support\\\\Facades\\\\Auth;\n/;
         }
       }
-      # insert check inside public function index
-      s/(public function index\([^\)]*\)\s*\{\s*)/$1\n        // GREYSYNC_PROTECT_ADMIN: block for non-superadmin\n        \$user = Auth::user();\n        if (!\$user || \$user->id != '$admin') { abort(403, "⛔ Akses ditolak (GreySync Protect)"); }\n/eg;
-    ' "$admin_id" "$ctrl.tmp" > "$ctrl.patched" && mv "$ctrl.patched" "$ctrl"
-
-    rm -f "$ctrl.tmp"
+      # patch fungsi index
+      s/(public function index\([^\)]*\)\s*\{\s*)/\$1\n        \/\/ GREYSYNC_PROTECT_ADMIN: block for non-superadmin\n        \$user = Auth::user();\n        if (!\$user || \$user->id != \$admin) { abort(403, \"⛔ Akses ditolak (GreySync Protect)\"); }\n/eg;
+    " "$ctrl" > "$ctrl.patched" && mv "$ctrl.patched" "$ctrl"
 
     if ! php_check "$ctrl"; then
       log "${RED}Patch $ctrl caused syntax error, restoring backup${RESET}"
       cp -f "$BACKUP_DIR/${ctrl#$ROOT/}.bak" "$ctrl" 2>/dev/null || true
       continue
     fi
-    # mark file
+
     sed -i '1i// GREYSYNC_PROTECT_ADMIN' "$ctrl"
     log "${GREEN}Patched admin controller: $ctrl${RESET}"
   done
+}tched==0) exit 0 }' "$SERVER_SERVICE" > "$SERVER_SERVICE.tmp" && mv "$SERVER_SERVICE.tmp" "$SERVER_SERVICE"
+
+  if ! php_check "$SERVER_SERVICE"; then
+    log "${RED}Patch ServerDeletionService caused syntax error, restoring backup${RESET}"
+    cp -f "$BACKUP_DIR/${SERVER_SERVICE#$ROOT/}.bak" "$SERVER_SERVICE" 2>/dev/null || true
+    return 2
+  fi
+  log "${GREEN}Patched ServerDeletionService (anti delete)${RESET}"
 }
+
+# ---------- PATCH: Admin Controllers (Node, Nest, Settings) ----------
+
 
 # ---------- RESTORE individual patched controllers from backups ----------
 restore_patched_controllers() {
