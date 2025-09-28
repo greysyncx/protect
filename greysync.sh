@@ -1,123 +1,169 @@
 #!/bin/bash
-# ==========================================================
-# GreySync Protect Installer v1.0
-# ==========================================================
+# ========================================================
+# GreySync Protect - Super Protect Script
+# Versi: 1.0
+# ========================================================
 
-RED="\033[1;31m"
-GREEN="\033[1;32m"
-CYAN="\033[1;36m"
-YELLOW="\033[1;33m"
-RESET="\033[0m"
-BOLD="\033[1m"
-VERSION="1.0"
+ROOT="/var/www/pterodactyl"
+MIDDLEWARE="$ROOT/app/Http/Middleware/GreySyncProtect.php"
+KERNEL="$ROOT/app/Http/Kernel.php"
+STORAGE="$ROOT/storage/app/greysync_protect.json"
+IDPROTECT="$ROOT/storage/app/idprotect.json"
+VIEW="$ROOT/resources/views/errors/protect.blade.php"
+ENV="$ROOT/.env"
+
+# Warna
+RED="\033[1;31m"; GREEN="\033[1;32m"; YELLOW="\033[1;33m"; CYAN="\033[1;36m"; RESET="\033[0m"
 
 clear
-echo -e "${CYAN}${BOLD}"
-echo "╔══════════════════════════════════════════════════════╗"
-echo "║                   GreySync Protect                    ║"
-echo "║                      Version $VERSION                  ║"
-echo "╚══════════════════════════════════════════════════════╝"
-echo -e "${RESET}"
+echo -e "${CYAN}═══════════════════════════════════════${RESET}"
+echo -e "   GreySync Protect - Super Shield"
+echo -e "═══════════════════════════════════════${RESET}"
+echo -e "${YELLOW}[1] Install Protect & Build Panel${RESET}"
+echo -e "${YELLOW}[2] Uninstall Protect${RESET}"
+echo -e "${YELLOW}[3] Restore Kernel.php dari Backup${RESET}"
+read -p "Pilih opsi [1/2/3]: " OPSI
 
-echo -e "${YELLOW}[1]${RESET} Pasang Protect & Build Panel"
-echo -e "${YELLOW}[2]${RESET} Restore dari Backup & Build Panel"
-echo -e "${YELLOW}[3]${RESET} Pasang Protect Admin"
-read -p "$(echo -e "${CYAN}Pilih opsi [1/2/3]: ${RESET}")" OPSI
+# Ambil credential MySQL
+DB_HOST=$(grep DB_HOST $ENV | cut -d '=' -f2)
+DB_NAME=$(grep DB_DATABASE $ENV | cut -d '=' -f2)
+DB_USER=$(grep DB_USERNAME $ENV | cut -d '=' -f2)
+DB_PASS=$(grep DB_PASSWORD $ENV | cut -d '=' -f2)
 
-# === Lokasi file penting Panel ===
-CONTROLLER_USER="/var/www/pterodactyl/app/Http/Controllers/Admin/UserController.php"
-SERVICE_SERVER="/var/www/pterodactyl/app/Services/Servers/ServerDeletionService.php"
+if [[ "$OPSI" == "1" ]]; then
+    echo -e "${YELLOW}➤ Backup Kernel.php...${RESET}"
+    [ -f "$KERNEL" ] && cp "$KERNEL" "$KERNEL.bak.$(date +%Y%m%d%H%M%S)"
 
-# ----------------------------------------------------------
-if [ "$OPSI" = "1" ]; then
-    read -p "$(echo -e "${CYAN}Masukkan User ID Admin Utama (contoh: 1): ${RESET}")" ADMIN_ID
+    echo -e "${YELLOW}➤ Tambahkan middleware...${RESET}"
+    if [[ -f "$KERNEL" ]] && ! grep -q "GreySyncProtect" "$KERNEL"; then
+        LINE=$(grep -Fn "'web' => [" "$KERNEL" | cut -d: -f1 | head -n1)
+        [ -n "$LINE" ] && awk -v n=$((LINE+1)) 'NR==n{print "        App\\\\Http\\\\Middleware\\\\GreySyncProtect::class,"}1' "$KERNEL" > "$KERNEL.tmp" && mv "$KERNEL.tmp" "$KERNEL"
+    fi
 
-    echo -e "${YELLOW}➤ Menambahkan Protect Delete User...${RESET}"
-    [ ! -f "$CONTROLLER_USER" ] && echo -e "${RED}❌ File tidak ditemukan.${RESET}" && exit 1
-    cp "$CONTROLLER_USER" "${CONTROLLER_USER}.bak"
+    mkdir -p "$(dirname "$MIDDLEWARE")"
+    cat > "$MIDDLEWARE" <<'PHP'
+<?php
+namespace App\Http\Middleware;
+use Closure;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Auth;
 
-    awk -v admin_id="$ADMIN_ID" '
-    /public function delete\(Request \$request, User \$user\): RedirectResponse/ {
-        print; in_func = 1; next;
+class GreySyncProtect {
+    protected function getSuperAdminId() {
+        $path = storage_path('app/idprotect.json');
+        if (file_exists($path)) {
+            $data = json_decode(file_get_contents($path), true);
+            return intval($data['superAdminId'] ?? 1);
+        }
+        return 1;
     }
-    in_func == 1 && /^\s*{/ {
-        print;
-        print "        if ($request->user()->id !== " admin_id ") {";
-        print "            throw new DisplayException(\"Akses ditolak! Proteksi GreySync v'"$VERSION"')\");";
-        print "        }";
-        in_func = 0; next;
+    protected function isProtectOn() {
+        if (Storage::exists('greysync_protect.json')) {
+            $data = json_decode(Storage::get('greysync_protect.json'), true);
+            return ($data['status'] ?? 'off') === 'on';
+        }
+        return false;
     }
-    { print }
-    ' "${CONTROLLER_USER}.bak" > "$CONTROLLER_USER"
-    echo -e "${GREEN}✔ Protect UserController selesai.${RESET}"
-
-    echo -e "${YELLOW}➤ Menambahkan Protect Delete Server...${RESET}"
-    [ ! -f "$SERVICE_SERVER" ] && echo -e "${RED}❌ File tidak ditemukan.${RESET}" && exit 1
-    cp "$SERVICE_SERVER" "${SERVICE_SERVER}.bak"
-
-    awk '
-BEGIN { added = 0 }
-{
-    print
-    if (!added && $0 ~ /^namespace Pterodactyl\\Services\\Servers;/) {
-        print "use Illuminate\\Support\\Facades\\Auth;"
-        print "use Pterodactyl\\Exceptions\\DisplayException;"
-        added = 1
+    protected function deny($request, $superAdminId) {
+        if ($request->ajax() || $request->wantsJson()) {
+            return response()->json(['error'=>'❌ Akses ditolak','powered'=>'GreySync Protect'],403);
+        }
+        return response()->view('errors.protect',['superAdminId'=>$superAdminId],403);
+    }
+    public function handle($request, Closure $next) {
+        $user = Auth::user();
+        $superAdminId = $this->getSuperAdminId();
+        if ($this->isProtectOn() && (!$user || $user->id !== $superAdminId)) {
+            $blocked=['admin/backups','downloads','storage',
+                      'server/*/files','api/client/servers/*/files'];
+            foreach ($blocked as $p) {
+                if ($request->is("$p*")) return $this->deny($request,$superAdminId);
+            }
+        }
+        return $next($request);
     }
 }
-' "$SERVICE_SERVER" > "$SERVICE_SERVER.tmp" && mv "$SERVICE_SERVER.tmp" "$SERVICE_SERVER"
+PHP
 
-    awk -v admin_id="$ADMIN_ID" '
-    /public function handle\(Server \$server\): void/ {
-        print; in_func = 1; next;
-    }
-    in_func == 1 && /^\s*{/ {
-        print;
-        print "        \$user = Auth::user();";
-        print "        if (\$user && \$user->id !== " admin_id ") {";
-        print "            throw new DisplayException(\"Akses ditolak! Proteksi GreySync v'"$VERSION"')\");";
-        print "        }";
-        in_func = 0; next;
-    }
-    { print }
-    ' "$SERVICE_SERVER" > "${SERVICE_SERVER}.patched" && mv "${SERVICE_SERVER}.patched" "$SERVICE_SERVER"
-    echo -e "${GREEN}✔ Protect ServerDeletionService selesai.${RESET}"
+    echo '{ "status": "on" }' > "$STORAGE"
+    echo '{ "superAdminId": 1 }' > "$IDPROTECT"
 
-    echo -e "${YELLOW}➤ Install Node.js 16 dan build frontend panel...${RESET}"
+    mkdir -p "$(dirname "$VIEW")"
+    cat > "$VIEW" <<'BLADE'
+<!doctype html><html><head><meta charset="utf-8">
+<title>GreySync Protect</title>
+<style>body{background:#bf1f2b;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;font-family:Arial;text-align:center}</style></head><body>
+<div><h1>❌ Mau maling? Gak bisa boss😹</h1>
+<p>GreySync Protect aktif.</p>
+<small>⿻ Powered by GreySync</small></div>
+</body></html>
+BLADE
+
+    echo -e "${YELLOW}➤ Tambahkan MySQL triggers...${RESET}"
+    mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" <<'SQL'
+DELIMITER $$
+
+DROP TRIGGER IF EXISTS protect_no_delete_users $$
+CREATE TRIGGER protect_no_delete_users BEFORE DELETE ON users
+FOR EACH ROW BEGIN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '❌ Dilarang hapus user (GreySync Protect)';
+END$$
+
+DROP TRIGGER IF EXISTS protect_no_delete_servers $$
+CREATE TRIGGER protect_no_delete_servers BEFORE DELETE ON servers
+FOR EACH ROW BEGIN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '❌ Dilarang hapus server (GreySync Protect)';
+END$$
+
+DROP TRIGGER IF EXISTS protect_no_delete_nodes $$
+CREATE TRIGGER protect_no_delete_nodes BEFORE DELETE ON nodes
+FOR EACH ROW BEGIN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '❌ Dilarang hapus node (GreySync Protect)';
+END$$
+
+DROP TRIGGER IF EXISTS protect_no_delete_eggs $$
+CREATE TRIGGER protect_no_delete_eggs BEFORE DELETE ON eggs
+FOR EACH ROW BEGIN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '❌ Dilarang hapus egg (GreySync Protect)';
+END$$
+
+DELIMITER ;
+SQL
+
+    echo -e "${YELLOW}➤ Build frontend panel...${RESET}"
     sudo apt-get update -y >/dev/null
     sudo apt-get remove nodejs -y >/dev/null
     curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash - >/dev/null
     sudo apt-get install nodejs -y >/dev/null
-
-    cd /var/www/pterodactyl || { echo -e "${RED}❌ Gagal ke direktori panel.${RESET}"; exit 1; }
-
+    cd "$ROOT" || exit 1
     npm i -g yarn >/dev/null
     yarn add cross-env >/dev/null
     yarn build:production --progress
 
-    echo -e "${GREEN}🎉 Proteksi GreySync v$VERSION & Build Panel berhasil dipasang.${RESET}"
+    echo -e "${GREEN}✅ Install Protect selesai.${RESET}"
 
-# ----------------------------------------------------------
-elif [ "$OPSI" = "2" ]; then
-    echo -e "${YELLOW}♻ Memulihkan dari backup...${RESET}"
-    [ -f "${CONTROLLER_USER}.bak" ] && cp "${CONTROLLER_USER}.bak" "$CONTROLLER_USER" && \
-        echo -e "${GREEN}✔ UserController dipulihkan.${RESET}" || \
-        echo -e "${RED}⚠ Backup UserController tidak ditemukan.${RESET}"
+elif [[ "$OPSI" == "2" ]]; then
+    echo -e "${YELLOW}➤ Uninstall Protect...${RESET}"
+    rm -f "$MIDDLEWARE" "$STORAGE" "$IDPROTECT" "$VIEW"
+    sed -i '/GreySyncProtect::class/d' "$KERNEL" || true
+    mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" <<'SQL'
+DROP TRIGGER IF EXISTS protect_no_delete_users;
+DROP TRIGGER IF EXISTS protect_no_delete_servers;
+DROP TRIGGER IF EXISTS protect_no_delete_nodes;
+DROP TRIGGER IF EXISTS protect_no_delete_eggs;
+SQL
+    cd "$ROOT" && php artisan config:clear && php artisan cache:clear && php artisan route:clear
+    echo -e "${GREEN}🗑️ Protect dihapus.${RESET}"
 
-    [ -f "${SERVICE_SERVER}.bak" ] && cp "${SERVICE_SERVER}.bak" "$SERVICE_SERVER" && \
-        echo -e "${GREEN}✔ ServerDeletionService dipulihkan.${RESET}" || \
-        echo -e "${RED}⚠ Backup ServerDeletionService tidak ditemukan.${RESET}"
-
-    echo -e "${YELLOW}➤ Build ulang panel...${RESET}"
-    cd /var/www/pterodactyl || { echo -e "${RED}❌ Gagal ke direktori panel.${RESET}"; exit 1; }
-    yarn build:production --progress
-
-    echo -e "${GREEN}✅ Restore & build selesai.${RESET}"
-
-# ----------------------------------------------------------
-elif [ "$OPSI" = "3" ]; then
-    bash <(curl -s https://raw.githubusercontent.com/greysyncx/protect.js/main/grey.sh)
-
+elif [[ "$OPSI" == "3" ]]; then
+    LATEST_BACKUP=$(ls -t "$KERNEL.bak."* 2>/dev/null | head -n 1 || true)
+    if [[ -z "$LATEST_BACKUP" ]]; then
+        echo -e "${RED}❌ Tidak ada backup Kernel.php ditemukan.${RESET}"
+        exit 1
+    fi
+    cp -f "$LATEST_BACKUP" "$KERNEL"
+    cd "$ROOT" && php artisan config:clear && php artisan cache:clear && php artisan route:clear
+    echo -e "${GREEN}✅ Kernel.php dipulihkan dari backup.${RESET}"
 else
     echo -e "${RED}❌ Opsi tidak valid.${RESET}"
 fi
