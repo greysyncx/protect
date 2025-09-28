@@ -1,7 +1,7 @@
 #!/bin/bash
 # ========================================================
-# GreySync Protect - Auto Protect Script (Non-Interactive)
-# Versi: 1.1
+# GreySync Protect - Auto Protect Script (Safe Version)
+# Versi: 1.3 (dengan rollback otomatis)
 # ========================================================
 
 ROOT="/var/www/pterodactyl"
@@ -20,6 +20,19 @@ DB_HOST=$(grep DB_HOST $ENV | cut -d '=' -f2)
 DB_NAME=$(grep DB_DATABASE $ENV | cut -d '=' -f2)
 DB_USER=$(grep DB_USERNAME $ENV | cut -d '=' -f2)
 DB_PASS=$(grep DB_PASSWORD $ENV | cut -d '=' -f2)
+
+rollback() {
+    echo -e "${RED}⚠️ Error terdeteksi! Rollback Kernel.php...${RESET}"
+    LATEST_BACKUP=$(ls -t "$KERNEL.bak."* 2>/dev/null | head -n 1 || true)
+    if [[ -n "$LATEST_BACKUP" ]]; then
+        cp -f "$LATEST_BACKUP" "$KERNEL"
+        cd "$ROOT" && php artisan config:clear && php artisan cache:clear && php artisan route:clear
+        echo -e "${GREEN}✅ Kernel.php dipulihkan.${RESET}"
+    else
+        echo -e "${RED}❌ Tidak ada backup Kernel.php.${RESET}"
+    fi
+    exit 1
+}
 
 install_protect() {
     echo -e "${YELLOW}➤ Backup Kernel.php...${RESET}"
@@ -120,13 +133,20 @@ END$$
 
 DELIMITER ;
 SQL
+    if [[ $? -ne 0 ]]; then
+        echo -e "${RED}❌ Gagal membuat trigger MySQL.${RESET}"
+        rollback
+    fi
 
     echo -e "${YELLOW}➤ Clear cache Laravel & Build Panel...${RESET}"
-    cd "$ROOT" || exit 1
+    cd "$ROOT" || rollback
     php artisan config:clear || true
     php artisan cache:clear || true
     php artisan route:clear || true
-    yarn build:production --progress
+
+    yarn install --ignore-engines >/dev/null 2>&1 || rollback
+    yarn add cross-env >/dev/null 2>&1 || rollback
+    yarn build:production --progress || rollback
 
     echo -e "${GREEN}✅ Install Protect selesai.${RESET}"
 }
@@ -135,7 +155,7 @@ uninstall_protect() {
     echo -e "${YELLOW}➤ Uninstall Protect...${RESET}"
     rm -f "$MIDDLEWARE" "$STORAGE" "$IDPROTECT" "$VIEW"
     sed -i '/GreySyncProtect::class/d' "$KERNEL" || true
-    mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" <<'SQL'
+    mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" <<'SQL' || true
 DROP TRIGGER IF EXISTS protect_no_delete_users;
 DROP TRIGGER IF EXISTS protect_no_delete_servers;
 DROP TRIGGER IF EXISTS protect_no_delete_nodes;
@@ -161,7 +181,7 @@ case "$1" in
     uninstall) uninstall_protect ;;
     restore) restore_kernel ;;
     *)
-        echo -e "${CYAN}GreySync Protect v1.1${RESET}"
+        echo -e "${CYAN}GreySync Protect v1.3${RESET}"
         echo "Usage: $0 {install|uninstall|restore}"
         exit 1
         ;;
