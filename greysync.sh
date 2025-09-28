@@ -1,7 +1,7 @@
 #!/bin/bash
 # ========================================================
-# GreySync Protect - Super Protect Script
-# Versi: 1.0
+# GreySync Protect - Auto Protect Script (Non-Interactive)
+# Versi: 1.1
 # ========================================================
 
 ROOT="/var/www/pterodactyl"
@@ -15,22 +15,13 @@ ENV="$ROOT/.env"
 # Warna
 RED="\033[1;31m"; GREEN="\033[1;32m"; YELLOW="\033[1;33m"; CYAN="\033[1;36m"; RESET="\033[0m"
 
-clear
-echo -e "${CYAN}═══════════════════════════════════════${RESET}"
-echo -e "   GreySync Protect - Super Shield"
-echo -e "═══════════════════════════════════════${RESET}"
-echo -e "${YELLOW}[1] Install Protect & Build Panel${RESET}"
-echo -e "${YELLOW}[2] Uninstall Protect${RESET}"
-echo -e "${YELLOW}[3] Restore Kernel.php dari Backup${RESET}"
-read -p "Pilih opsi [1/2/3]: " OPSI
-
-# Ambil credential MySQL
+# Ambil credential MySQL dari .env
 DB_HOST=$(grep DB_HOST $ENV | cut -d '=' -f2)
 DB_NAME=$(grep DB_DATABASE $ENV | cut -d '=' -f2)
 DB_USER=$(grep DB_USERNAME $ENV | cut -d '=' -f2)
 DB_PASS=$(grep DB_PASSWORD $ENV | cut -d '=' -f2)
 
-if [[ "$OPSI" == "1" ]]; then
+install_protect() {
     echo -e "${YELLOW}➤ Backup Kernel.php...${RESET}"
     [ -f "$KERNEL" ] && cp "$KERNEL" "$KERNEL.bak.$(date +%Y%m%d%H%M%S)"
 
@@ -130,19 +121,17 @@ END$$
 DELIMITER ;
 SQL
 
-    echo -e "${YELLOW}➤ Build frontend panel...${RESET}"
-    sudo apt-get update -y >/dev/null
-    sudo apt-get remove nodejs -y >/dev/null
-    curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash - >/dev/null
-    sudo apt-get install nodejs -y >/dev/null
+    echo -e "${YELLOW}➤ Clear cache Laravel & Build Panel...${RESET}"
     cd "$ROOT" || exit 1
-    npm i -g yarn >/dev/null
-    yarn add cross-env >/dev/null
+    php artisan config:clear || true
+    php artisan cache:clear || true
+    php artisan route:clear || true
     yarn build:production --progress
 
     echo -e "${GREEN}✅ Install Protect selesai.${RESET}"
+}
 
-elif [[ "$OPSI" == "2" ]]; then
+uninstall_protect() {
     echo -e "${YELLOW}➤ Uninstall Protect...${RESET}"
     rm -f "$MIDDLEWARE" "$STORAGE" "$IDPROTECT" "$VIEW"
     sed -i '/GreySyncProtect::class/d' "$KERNEL" || true
@@ -154,8 +143,9 @@ DROP TRIGGER IF EXISTS protect_no_delete_eggs;
 SQL
     cd "$ROOT" && php artisan config:clear && php artisan cache:clear && php artisan route:clear
     echo -e "${GREEN}🗑️ Protect dihapus.${RESET}"
+}
 
-elif [[ "$OPSI" == "3" ]]; then
+restore_kernel() {
     LATEST_BACKUP=$(ls -t "$KERNEL.bak."* 2>/dev/null | head -n 1 || true)
     if [[ -z "$LATEST_BACKUP" ]]; then
         echo -e "${RED}❌ Tidak ada backup Kernel.php ditemukan.${RESET}"
@@ -164,6 +154,15 @@ elif [[ "$OPSI" == "3" ]]; then
     cp -f "$LATEST_BACKUP" "$KERNEL"
     cd "$ROOT" && php artisan config:clear && php artisan cache:clear && php artisan route:clear
     echo -e "${GREEN}✅ Kernel.php dipulihkan dari backup.${RESET}"
-else
-    echo -e "${RED}❌ Opsi tidak valid.${RESET}"
-fi
+}
+
+case "$1" in
+    install) install_protect ;;
+    uninstall) uninstall_protect ;;
+    restore) restore_kernel ;;
+    *)
+        echo -e "${CYAN}GreySync Protect v1.1${RESET}"
+        echo "Usage: $0 {install|uninstall|restore}"
+        exit 1
+        ;;
+esac
