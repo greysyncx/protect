@@ -2,11 +2,6 @@
 # GreySync Protect - v1.4 Final
 # Full protect: anti delete user/server + anti intip (files, storage, backups, settings)
 # Usage:
-#   bash greysync.sh install
-#   bash greysync.sh uninstall
-#   bash greysync.sh restore
-#   bash greysync.sh adminpatch <ADMIN_ID>
-#   bash greysync.sh adminrestore
 
 ROOT="/var/www/pterodactyl"
 MIDDLEWARE="$ROOT/app/Http/Middleware/GreySyncProtect.php"
