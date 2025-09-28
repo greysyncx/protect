@@ -1,6 +1,6 @@
 #!/bin/bash
 # GreySync Protect - Hybrid Mode (auto & manual)
-# Versi: 2.4 (gabungan auto-install + opsi install|uninstall|restore)
+# Versi: 1.0 (stabil fix namespace)
 
 ROOT="/var/www/pterodactyl"
 MIDDLEWARE="$ROOT/app/Http/Middleware/GreySyncProtect.php"
@@ -23,7 +23,7 @@ insert_kernel_middleware() {
   cp "$KERNEL" "$KERNEL.bak.$(date +%s)"
   LINE=$(grep -Fn "'web' => [" "$KERNEL" | cut -d: -f1 | head -n1)
   [[ -z "$LINE" ]] && { log "${RED}❌ 'web' middleware array tidak ketemu${RESET}"; return 1; }
-  awk -v n=$((LINE+1)) 'NR==n{print "        App\\Http\\Middleware\\GreySyncProtect::class,"}1' "$KERNEL" > "$KERNEL.tmp" && mv "$KERNEL.tmp" "$KERNEL"
+  awk -v n=$((LINE+1)) 'NR==n{print "        \\\\App\\\\Http\\\\Middleware\\\\GreySyncProtect::class,"}1' "$KERNEL" > "$KERNEL.tmp" && mv "$KERNEL.tmp" "$KERNEL"
   log "${GREEN}✔ Middleware ditambahkan ke Kernel.php${RESET}"
 }
 
@@ -131,5 +131,5 @@ case "$1" in
   install|"") install_panel ;;
   uninstall) uninstall_panel ;;
   restore) restore_kernel ;;
-  *) echo -e "${CYAN}GreySync Protect v2.4${RESET}"; echo "Usage: $0 {install|uninstall|restore}"; exit 1 ;;
+  *) echo -e "${CYAN}GreySync Protect v1.0${RESET}"; echo "Usage: $0 {install|uninstall|restore}"; exit 1 ;;
 esac
