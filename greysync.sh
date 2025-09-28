@@ -1,7 +1,6 @@
 #!/bin/bash
-# GreySync Protect - v1.4 Final
+# GreySync Protect - v1.4 Final (Fix)
 # Full protect: anti delete user/server + anti intip (files, storage, backups, settings)
-# Usage:
 
 ROOT="/var/www/pterodactyl"
 MIDDLEWARE="$ROOT/app/Http/Middleware/GreySyncProtect.php"
@@ -155,8 +154,10 @@ patch_admin_controllers() {
 
 # --- Restore ---
 restore_patched_controllers() {
+  LATEST_BACKUP=$(ls -td $ROOT/greysync_backups_* 2>/dev/null | head -n1)
+  [[ -z "$LATEST_BACKUP" ]] && { log "${YELLOW}⚠️ Tidak ada backup untuk restore${RESET}"; return; }
   for ctrl in "${ADMIN_CONTROLLERS[@]}" "$USER_CONTROLLER" "$SERVER_SERVICE"; do
-    [[ -f "$BACKUP_DIR/${ctrl#$ROOT/}.bak" ]] && cp -f "$BACKUP_DIR/${ctrl#$ROOT/}.bak" "$ctrl"
+    [[ -f "$LATEST_BACKUP/${ctrl#$ROOT/}.bak" ]] && cp -f "$LATEST_BACKUP/${ctrl#$ROOT/}.bak" "$ctrl"
   done
   fix_laravel
 }
@@ -175,6 +176,13 @@ install_all() {
   cd "$ROOT" && composer dump-autoload -o
   fix_laravel
   log "${GREEN}✅ GreySync Protect installed.${RESET}"
+}
+uninstall_all() {
+  rm -f "$MIDDLEWARE" "$VIEW" "$STORAGE" "$IDPROTECT"
+  remove_kernel_middleware
+  restore_patched_controllers
+  fix_laravel
+  log "${GREEN}✅ GreySync Protect uninstalled.${RESET}"
 }
 
 case "$1" in
