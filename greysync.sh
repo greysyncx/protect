@@ -89,6 +89,7 @@ PHP
 
 # --- Error view ---
 write_error_view() {
+  mkdir -p "$(dirname "$VIEW")"
   cat > "$VIEW" <<'BLADE'
 <!doctype html><html><head><meta charset="utf-8">
 <title>GreySync Protect</title>
