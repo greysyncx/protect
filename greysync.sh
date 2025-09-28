@@ -172,7 +172,7 @@ install_all() {
   patch_user_controller
   patch_server_service
   patch_admin_controllers 1
-  cd "$ROOT" && composer dump-autoload -o   # <--- WAJIB biar Laravel kenal GreySyncProtect
+  cd "$ROOT" && composer dump-autoload -o
   fix_laravel
   log "${GREEN}✅ GreySync Protect installed.${RESET}"
 }
