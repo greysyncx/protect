@@ -1,11 +1,14 @@
 #!/bin/bash
-# GreySync Protect - v1.5 Final (No Backup Protect)
+# ========================================================
+# GreySync Protect - v1.5 Final
 # Full Protect: User, Server, Node, Nest, Settings
+# (BackupController dihapus biar gak error)
+# ========================================================
 
 ROOT="/var/www/pterodactyl"
 BACKUP_DIR="$ROOT/greysync_backups_$(date +%s)"
 
-# Controller & Service Paths
+# Path Controllers & Services
 USER_CONTROLLER="$ROOT/app/Http/Controllers/Admin/UserController.php"
 SERVER_SERVICE="$ROOT/app/Services/Servers/ServerDeletionService.php"
 NODE_CONTROLLER="$ROOT/app/Http/Controllers/Admin/Nodes/NodeController.php"
@@ -57,7 +60,7 @@ patch_server_service() {
   {print}' "$SERVER_SERVICE" > "$SERVER_SERVICE.tmp" && mv "$SERVER_SERVICE.tmp" "$SERVER_SERVICE"
 }
 
-# --- Protect Admin Index in Controllers ---
+# --- Protect Admin Controllers (Node, Nest, Settings) ---
 patch_admin_controller() {
   local ctrl="$1"
   local tag="$2"
@@ -71,6 +74,7 @@ patch_admin_controller() {
   " "$ctrl" > "$ctrl.tmp" && mv "$ctrl.tmp" "$ctrl"
 }
 
+# --- Install Protect ---
 install_all() {
   mkdir -p "$BACKUP_DIR"
   patch_user_controller
@@ -86,6 +90,7 @@ install_all() {
   log "✅ GreySync Protect v1.5 Installed (User, Server, Node, Nest, Settings)"
 }
 
+# --- Uninstall Protect ---
 uninstall_all() {
   [[ -d "$BACKUP_DIR" ]] || { log "⚠️ Tidak ada backup"; return; }
   find "$BACKUP_DIR" -name "*.bak" | while read f; do
@@ -98,6 +103,7 @@ uninstall_all() {
   log "✅ GreySync Protect v1.5 Uninstalled & Restored"
 }
 
+# --- Entry Point ---
 case "$1" in
   install|"") install_all ;;
   uninstall) uninstall_all ;;
