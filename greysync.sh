@@ -2,7 +2,6 @@
 # ========================================================
 # GreySync Protect - v1.5 Final
 # Full Protect: User, Server, Node, Nest, Settings
-# (BackupController dihapus biar gak error)
 # ========================================================
 
 ROOT="/var/www/pterodactyl"
