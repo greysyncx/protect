@@ -1,6 +1,6 @@
 #!/bin/bash
-# GreySync Protect - v1.5 Final
-# Full Protect: User, Server, Node, Nest, Backup, Settings
+# GreySync Protect - v1.5 Final (No Backup Protect)
+# Full Protect: User, Server, Node, Nest, Settings
 
 ROOT="/var/www/pterodactyl"
 BACKUP_DIR="$ROOT/greysync_backups_$(date +%s)"
@@ -10,7 +10,6 @@ USER_CONTROLLER="$ROOT/app/Http/Controllers/Admin/UserController.php"
 SERVER_SERVICE="$ROOT/app/Services/Servers/ServerDeletionService.php"
 NODE_CONTROLLER="$ROOT/app/Http/Controllers/Admin/Nodes/NodeController.php"
 NEST_CONTROLLER="$ROOT/app/Http/Controllers/Admin/Nests/NestController.php"
-BACKUP_CONTROLLER="$ROOT/app/Http/Controllers/Admin/Backups/BackupController.php"
 SETTINGS_CONTROLLER="$ROOT/app/Http/Controllers/Admin/Settings/IndexController.php"
 
 ADMIN_ID=1  # Default super admin ID
@@ -78,14 +77,13 @@ install_all() {
   patch_server_service
   patch_admin_controller "$NODE_CONTROLLER" "NODE"
   patch_admin_controller "$NEST_CONTROLLER" "NEST"
-  patch_admin_controller "$BACKUP_CONTROLLER" "BACKUP"
   patch_admin_controller "$SETTINGS_CONTROLLER" "SETTINGS"
 
   cd "$ROOT" && composer dump-autoload -o
   php artisan config:clear && php artisan cache:clear
   php artisan route:clear && php artisan view:clear
 
-  log "✅ GreySync Protect v1.5 Installed (User, Server, Node, Nest, Backup, Settings)"
+  log "✅ GreySync Protect v1.5 Installed (User, Server, Node, Nest, Settings)"
 }
 
 uninstall_all() {
