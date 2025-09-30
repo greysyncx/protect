@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# GreySync Protect v1.6.3
-
+# GreySync Protect v1.6.3 (Fixed)
 set -euo pipefail
 IFS=$'\n\t'
 
+# === CONFIG ===
 ROOT="${ROOT:-/var/www/pterodactyl}"
 BACKUP_PARENT="${BACKUP_PARENT:-$ROOT/greysync_backups}"
 TIMESTAMP="$(date +%s)"
@@ -14,7 +14,7 @@ IDPROTECT="${IDPROTECT:-$ROOT/storage/app/idprotect.json}"
 ADMIN_ID_DEFAULT="${ADMIN_ID_DEFAULT:-1}"
 LOGFILE="${LOGFILE:-/var/log/greysync_protect.log}"
 
-YARN_BUILD=true
+YARN_BUILD=false
 VERSION="1.6.3"
 IN_INSTALL=false
 EXIT_CODE=0
@@ -34,9 +34,10 @@ declare -A TARGETS=(
 # Colors
 RED="\033[1;31m"; GREEN="\033[1;32m"; YELLOW="\033[1;33m"; CYAN="\033[1;36m"; RESET="\033[0m"
 
-log(){ echo -e "$(date -u +'%Y-%m-%dT%H:%M:%SZ') - $*" | tee -a "$LOGFILE"; }
-err(){ echo -e "${RED}$*${RESET}" | tee -a "$LOGFILE" >&2; EXIT_CODE=1; }
-ok(){ echo -e "${GREEN}$*${RESET}" | tee -a "$LOGFILE"; }
+# Logging
+log(){ printf "%s - %s\n" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*" | tee -a "$LOGFILE"; }
+err(){ printf "%s\n" "${RED}[ERROR] $*${RESET}" | tee -a "$LOGFILE" >&2; EXIT_CODE=1; }
+ok(){ printf "%s\n" "${GREEN}[OK] $*${RESET}" | tee -a "$LOGFILE"; }
 
 # find php binary
 php_bin() {
@@ -59,8 +60,14 @@ php_check_file() {
 }
 
 ensure_backup_parent(){ mkdir -p "$BACKUP_PARENT"; }
-backup_file(){ local f="$1"; [[ -f "$f" ]] || return 0; mkdir -p "$BACKUP_DIR/$(dirname "${f#$ROOT/}")"; cp -af "$f" "$BACKUP_DIR/${f#$ROOT/}.bak"; log "Backup: $f"; }
-save_latest_symlink(){ mkdir -p "$BACKUP_PARENT"; ln -sfn "$(basename "$BACKUP_DIR")" "$BACKUP_LATEST_LINK"; }
+backup_file(){ 
+  local f="$1"
+  [[ -f "$f" ]] || return 0
+  mkdir -p "$BACKUP_DIR/$(dirname "${f#$ROOT/}")"
+  cp -af "$f" "$BACKUP_DIR/${f#$ROOT/}.bak"
+  log "Backup: $f"
+}
+save_latest_symlink(){ mkdir -p "$BACKUP_PARENT"; ln -sfn "$BACKUP_DIR" "$BACKUP_LATEST_LINK"; }
 
 restore_from_dir(){
   local dir="$1"
@@ -75,8 +82,10 @@ restore_from_dir(){
 
 restore_from_latest_backup(){
   local latest
-  if [[ -L "$BACKUP_LATEST_LINK" ]]; then latest="$(readlink -f "$BACKUP_LATEST_LINK")"
-  else latest="$(ls -td "$BACKUP_PARENT"/greysync_* 2>/dev/null | head -n1 || true)"
+  if [[ -L "$BACKUP_LATEST_LINK" ]]; then
+    latest="$(readlink -f "$BACKUP_LATEST_LINK")"
+  else
+    latest="$(ls -td "$BACKUP_PARENT"/greysync_* 2>/dev/null | head -n1 || true)"
   fi
   [[ -z "$latest" || ! -d "$latest" ]] && { err "No backups found"; return 1; }
   restore_from_dir "$latest"
@@ -88,9 +97,9 @@ ensure_auth_use() {
   if ! grep -q "Illuminate\\\\Support\\\\Facades\\\\Auth" "$file"; then
     awk '
     BEGIN{ins=0}
-    /namespace[[:space:]]+[A-Za-z0-9_\\\]+;/ && ins==0 {
+    /namespace[[:space:]]+[A-Za-z0-9_\\]+;/ && ins==0 {
       print $0
-      print "use Illuminate\\Support\\Facades\\Auth;"
+      print "use Illuminate\\\\Support\\\\Facades\\\\Auth;"
       ins=1; next
     }
     { print }
@@ -122,10 +131,10 @@ insert_guard_into_first_method() {
 
     if (in_sig == 1) {
       print line
-      if (match(line, /^\s*{/)) {
+      if (index(line, "{") > 0) {
         print "        // GREYSYNC_PROTECT_" tag
-        print "        \\$user = Auth::user();"
-        print "        if (!\\$user || \\$user->id != " admin ") {"
+        print "        $user = Auth::user();"
+        print "        if (!$user || $user->id != " admin ") {"
         print "            abort(403, \"❌ GreySync Protect: Akses ditolak (" tag ")\");"
         print "        }"
         in_sig = 0
@@ -134,15 +143,15 @@ insert_guard_into_first_method() {
       next
     }
 
-    if (match(line, /public[[:space:]]+function[[:space:]]+([A-Za-z0-9_]+)\s*\(/, m)) {
+    if (match(line, /public[[:space:]]+function[[:space:]]+([A-Za-z0-9_]+)[[:space:]]*\(/, m)) {
       fname = m[1]
       if (fname == "__construct") { print line; next }
       if (methods[fname] && patched == 0) {
         if (index(line, "{") > 0) {
           print line
           print "        // GREYSYNC_PROTECT_" tag
-          print "        \\$user = Auth::user();"
-          print "        if (!\\$user || \\$user->id != " admin ") {"
+          print "        $user = Auth::user();"
+          print "        if (!$user || $user->id != " admin ") {"
           print "            abort(403, \"❌ GreySync Protect: Akses ditolak (" tag ")\");"
           print "        }"
           patched = 1
@@ -154,23 +163,21 @@ insert_guard_into_first_method() {
         }
       }
     }
-
     print line
   }
   ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
 
   if ! php_check_file "$file"; then
     err "$tag syntax error after patch, restoring backup"
-    cp -af "$BACKUP_DIR/${file#$ROOT/}.bak" "$file"
+    cp -af "$BACKUP_DIR/${file#$ROOT/}.bak" "$file" || true
     return 2
   fi
 
   ok "Patched: $tag ($file)"
 }
 
-# Patch FileController: hanya owner atau super-admin
 patch_file_manager() {
-  local file="$ROOT/app/Http/Controllers/Api/Client/Servers/FileController.php"
+  local file="${TARGETS[FILE]}"
   local admin_id="$1"
 
   [[ -f "$file" ]] || { log "Skip FileController (not found): $file"; return 0; }
@@ -190,22 +197,22 @@ patch_file_manager() {
       print line
       if (index(line,"{")>0) {
         print "        // GREYSYNC_PROTECT_FILE"
-        print "        \\$user = null;"
-        print "        try { \\$user = Auth::user(); } catch (\\\\Throwable \\$e) { \\$user = (isset(\\$request) && method_exists(\\$request, \"user\")) ? \\$request->user() : null; }"
-        print "        if (!\\$user) { abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu MODIFY SECURITY\"); }"
+        print "        $user = null;"
+        print "        try { $user = Auth::user(); } catch (\\\\Throwable $e) { $user = (isset($request) && method_exists($request, \"user\")) ? $request->user() : null; }"
+        print "        if (!$user) { abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu MODIFY SECURITY\"); }"
         print ""
-        print "        \\$server = (isset(\\$server) && is_object(\\$server)) ? \\$server : null;"
-        print "        if (!\\$server && isset(\\$request) && is_object(\\$request)) {"
-        print "            \\$server = \\$request->attributes->get(\"server\") ?? (method_exists(\\$request, \"route\") ? \\$request->route(\"server\") : null);"
+        print "        $server = (isset($server) && is_object($server)) ? $server : null;"
+        print "        if (!$server && isset($request) && is_object($request)) {"
+        print "            $server = $request->attributes->get(\"server\") ?? (method_exists($request, \"route\") ? $request->route(\"server\") : null);"
         print "        }"
-        print "        if (!\\$server && isset(\\$request) && method_exists(\\$request, \"input\")) {"
-        print "            \\$sid = \\$request->input(\"server_id\") ?? \\$request->input(\"id\") ?? null;"
-        print "            if (\\$sid) {"
-        print "                try { \\$server = \\\\Pterodactyl\\\\Models\\\\Server::find(\\$sid); } catch (\\\\Throwable \\$e) { \\$server = null; }"
+        print "        if (!$server && isset($request) && method_exists($request, \"input\")) {"
+        print "            $sid = $request->input(\"server_id\") ?? $request->input(\"id\") ?? null;"
+        print "            if ($sid) {"
+        print "                try { $server = \\\\Pterodactyl\\\\Models\\\\Server::find($sid); } catch (\\\\Throwable $e) { $server = null; }"
         print "            }"
         print "        }"
-        print "        \\$ownerId = (\\$server && is_object(\\$server)) ? (\\$server->owner_id ?? \\$server->user_id ?? null) : null;"
-        print "        if (\\$user->id != " admin " && (!\\$ownerId || \\$ownerId != \\$user->id)) {"
+        print "        $ownerId = ($server && is_object($server)) ? ($server->owner_id ?? $server->user_id ?? null) : null;"
+        print "        if ($user->id != " admin " && (!$ownerId || $ownerId != $user->id)) {"
         print "            abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu MODIFY SECURITY\");"
         print "        }"
         in_sig=0
@@ -213,24 +220,24 @@ patch_file_manager() {
       next
     }
 
-    if (match(line, /public[[:space:]]+function[[:space:]]+[A-Za-z0-9_]+\s*\([^)]*\)\s*\{?/)) {
+    if (match(line, /public[[:space:]]+function[[:space:]]+[A-Za-z0-9_]+[[:space:]]*\([^)]*\)[[:space:]]*\{?/)) {
       print line
       if (index(line,"{")>0) {
         print "        // GREYSYNC_PROTECT_FILE"
-        print "        \\$user = null;"
-        print "        try { \\$user = Auth::user(); } catch (\\\\Throwable \\$e) { \\$user = (isset(\\$request) && method_exists(\\$request, \"user\")) ? \\$request->user() : null; }"
-        print "        if (!\\$user) { abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu MODIFY SECURITY\"); }"
+        print "        $user = null;"
+        print "        try { $user = Auth::user(); } catch (\\\\Throwable $e) { $user = (isset($request) && method_exists($request, \"user\")) ? $request->user() : null; }"
+        print "        if (!$user) { abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu MODIFY SECURITY\"); }"
         print ""
-        print "        \\$server = (isset(\\$server) && is_object(\\$server)) ? \\$server : null;"
-        print "        if (!\\$server && isset(\\$request) && is_object(\\$request)) {"
-        print "            \\$server = \\$request->attributes->get(\"server\") ?? (method_exists(\\$request, \"route\") ? \\$request->route(\"server\") : null);"
+        print "        $server = (isset($server) && is_object($server)) ? $server : null;"
+        print "        if (!$server && isset($request) && is_object($request)) {"
+        print "            $server = $request->attributes->get(\"server\") ?? (method_exists($request, \"route\") ? $request->route(\"server\") : null);"
         print "        }"
-        print "        if (!\\$server && isset(\\$request) && method_exists(\\$request, \"input\")) {"
-        print "            \\$sid = \\$request->input(\"server_id\") ?? \\$request->input(\"id\") ?? null;"
-        print "            if (\\$sid) { try { \\$server = \\\\Pterodactyl\\\\Models\\\\Server::find(\\$sid); } catch (\\\\Throwable \\$e) { \\$server = null; } }"
+        print "        if (!$server && isset($request) && method_exists($request, \"input\")) {"
+        print "            $sid = $request->input(\"server_id\") ?? $request->input(\"id\") ?? null;"
+        print "            if ($sid) { try { $server = \\\\Pterodactyl\\\\Models\\\\Server::find($sid); } catch (\\\\Throwable $e) { $server = null; } }"
         print "        }"
-        print "        \\$ownerId = (\\$server && is_object(\\$server)) ? (\\$server->owner_id ?? \\$server->user_id ?? null) : null;"
-        print "        if (\\$user->id != " admin " && (!\\$ownerId || \\$ownerId != \\$user->id)) {"
+        print "        $ownerId = ($server && is_object($server)) ? ($server->owner_id ?? $server->user_id ?? null) : null;"
+        print "        if ($user->id != " admin " && (!$ownerId || $ownerId != $user->id)) {"
         print "            abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu MODIFY SECURITY\");"
         print "        }"
       } else {
@@ -266,7 +273,7 @@ patch_user_delete(){
       print line
       if (index(line,"{")>0) {
         print "        // GREYSYNC_PROTECT_USER"
-        print "        if (isset(\\$request) && \\$request->user()->id != " admin ") { throw new Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus user\"); }"
+        print "        if (isset($request) && $request->user()->id != " admin ") { throw new Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus user\"); }"
         in_sig=0; patched=1
       }
       next
@@ -275,7 +282,7 @@ patch_user_delete(){
       if (index(line,"{")>0) {
         print line
         print "        // GREYSYNC_PROTECT_USER"
-        print "        if (isset(\\$request) && \\$request->user()->id != " admin ") { throw new Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus user\"); }"
+        print "        if (isset($request) && $request->user()->id != " admin ") { throw new Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus user\"); }"
         patched=1
         next
       } else {
@@ -307,8 +314,8 @@ patch_server_delete_service(){
       print line
       if (index(line,"{")>0) {
         print "        // GREYSYNC_PROTECT_SERVER"
-        print "        \\$user = Auth::user();"
-        print "        if (\\$user && \\$user->id != " admin ") { throw new Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus server\"); }"
+        print "        $user = Auth::user();"
+        print "        if ($user && $user->id != " admin ") { throw new Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus server\"); }"
         in_sig=0; patched=1
       }
       next
@@ -317,8 +324,8 @@ patch_server_delete_service(){
       if (index(line,"{")>0) {
         print line
         print "        // GREYSYNC_PROTECT_SERVER"
-        print "        \\$user = Auth::user();"
-        print "        if (\\$user && \\$user->id != " admin ") { throw new Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus server\"); }"
+        print "        $user = Auth::user();"
+        print "        if ($user && $user->id != " admin ") { throw new Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus server\"); }"
         patched=1
         next
       } else {
@@ -375,11 +382,16 @@ run_yarn_build(){
 }
 
 install_all(){
-  IN_INSTALL=true; ensure_backup_parent; mkdir -p "$BACKUP_DIR"; save_latest_symlink
+  IN_INSTALL=true
+  ensure_backup_parent
+  mkdir -p "$BACKUP_DIR"
+  save_latest_symlink
   local admin_id="${1:-$ADMIN_ID_DEFAULT}"
   log "Installing GreySync Protect v$VERSION (admin_id=$admin_id)"
   echo '{ "status":"on" }' > "$STORAGE"
   echo '{ "superAdminId": '"$admin_id"' }' > "$IDPROTECT"
+
+  # Run patches in order
   patch_user_delete "$admin_id"
   patch_server_delete_service "$admin_id"
   for tag in NODE NEST SETTINGS DATABASES LOCATIONS; do
@@ -402,28 +414,38 @@ uninstall_all(){
 
 admin_patch(){
   local newid="${1:-}"
-  [[ -z "$newid" || ! "$newid" =~ ^[0-9]+$ ]] && { err "Usage: $0 adminpatch <id>"; return 1; }
+  if [[ -z "$newid" || ! "$newid" =~ ^[0-9]+$ ]]; then
+    err "Usage: $0 adminpatch <id>"
+    return 1
+  fi
   echo '{ "superAdminId": '"$newid"' }' > "$IDPROTECT"
   ok "SuperAdmin ID set -> $newid"
-  patch_user_delete "$newid"; patch_server_delete_service "$newid"
+  patch_user_delete "$newid"
+  patch_server_delete_service "$newid"
   for tag in NODE NEST SETTINGS DATABASES LOCATIONS; do
     insert_guard_into_first_method "${TARGETS[$tag]}" "$tag" "$newid" "index view show edit update create"
   done
-  patch_file_manager "$newid"; fix_laravel || true
+  patch_file_manager "$newid"
+  fix_laravel || true
 }
 
 trap '_on_error_trap' ERR
-_on_error_trap(){ local rc=$?; [[ "$IN_INSTALL" = true ]] && { err "Error during install, rollback..."; restore_from_dir "$BACKUP_DIR" || true; fix_laravel || true; }; exit $rc; }
+_on_error_trap(){ local rc=$?; if [[ "$IN_INSTALL" = true ]]; then err "Error during install, rollback..."; restore_from_dir "$BACKUP_DIR" || true; fix_laravel || true; fi; exit $rc; }
 
 print_menu(){
-  clear; echo -e "${CYAN}GreySync Protect v$VERSION${RESET}"
-  echo "1) Install Protect"; echo "2) Uninstall Protect"; echo "3) Restore Backup"; echo "4) Set SuperAdmin ID"; echo "5) Exit"
-  read -p "Pilih opsi [1-5]: " opt
+  clear
+  echo -e "${CYAN}GreySync Protect v$VERSION${RESET}"
+  echo "1) Install Protect"
+  echo "2) Uninstall Protect"
+  echo "3) Restore Backup"
+  echo "4) Set SuperAdmin ID"
+  echo "5) Exit"
+  read -rp "Pilih opsi [1-5]: " opt
   case "$opt" in
-    1) read -p "Admin ID (default $ADMIN_ID_DEFAULT): " aid; install_all "${aid:-$ADMIN_ID_DEFAULT}" ;;
+    1) read -rp "Admin ID (default $ADMIN_ID_DEFAULT): " aid; install_all "${aid:-$ADMIN_ID_DEFAULT}" ;;
     2) uninstall_all ;;
     3) restore_from_latest_backup && fix_laravel ;;
-    4) read -p "SuperAdmin ID baru: " nid; admin_patch "$nid" ;;
+    4) read -rp "SuperAdmin ID baru: " nid; admin_patch "$nid" ;;
     5) exit 0 ;;
     *) echo "Pilihan tidak valid"; exit 1 ;;
   esac
