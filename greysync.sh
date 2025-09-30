@@ -14,7 +14,7 @@ ADMIN_ID_DEFAULT="${ADMIN_ID_DEFAULT:-1}"
 LOGFILE="${LOGFILE:-/var/log/greysync_protect.log}"
 
 YARN_BUILD=false
-VERSION="1.6.4"
+VERSION="1.6.5-fix"
 IN_INSTALL=false
 EXIT_CODE=0
 
@@ -65,30 +65,52 @@ restore_from_latest_backup(){
 
 ensure_auth_use(){
   [[ -f "$1" ]] || return
+  # insert Auth use only if not present
   grep -q "Illuminate\\\\Support\\\\Facades\\\\Auth" "$1" || \
   awk '/namespace/{print;print "use Illuminate\\Support\\Facades\\Auth;";next}1' "$1" > "$1.tmp" && mv "$1.tmp" "$1" && log "Inserted Auth use into $1"
 }
 
+# Insert guard into all public functions (admin-only guard).
 insert_guard(){
   local file="$1" tag="$2" admin="$3"
   [[ -f "$file" ]] || { log "Skip (not found): $file"; return; }
+
+  # if already patched anywhere, skip (idempotent)
   grep -q "GREYSYNC_PROTECT_${tag}" "$file" && { log "Already patched $tag"; return; }
+
   backup_file "$file"
+  ensure_auth_use "$file"
+
+  # admin-only snippet: escape $ and backslashes carefully
   awk -v admin="$admin" -v tag="$tag" '
-  BEGIN{patched=0}
-  /public[[:space:]]+function/ && patched==0{
+  {
+    # print lines normally, but when we see "public function" insert snippet after the opening {
     print $0
-    print "        // GREYSYNC_PROTECT_"tag
-    print "        $user = Auth::user();"
-    print "        if (!$user || $user->id != "admin") { abort(403, \"❌ GreySync Protect: Akses ditolak\"); }"
-    patched=1; next
+    if ($0 ~ /public[[:space:]]+function[[:space:]]+[A-Za-z0-9_]+\s*\([^)]*\)\s*\{/) {
+      print "        // GREYSYNC_PROTECT_"tag
+      print "        \\$user = null;"
+      print "        try { \\$user = Auth::user(); } catch (\\\\Throwable \\$e) {"
+      print "            if (isset(\\$request) && method_exists(\\$request, \"user\")) { \\$user = \\$request->user(); }"
+      print "        }"
+      print "        if (!\\$user) { abort(403, \"❌ GreySync Protect: Akses terbatas - hubungi admin.\"); }"
+      print "        if (\\$user->id != " admin ") {"
+      print "            abort(403, \"❌ GreySync Protect: Akses terbatas - hanya super-admin yang boleh melakukan aksi ini.\");"
+      print "        }"
+    }
   }
-  {print}
   ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
-  php_check_file "$file" || { err "Syntax error $file"; return 1; }
-  ok "Patched: $file"
+
+  # validate php syntax
+  if ! php_check_file "$file"; then
+    err "Syntax error after patching $file — restoring backup"
+    restore_from_dir "$BACKUP_DIR"
+    return 1
+  fi
+
+  ok "Patched: $file (admin-only guard)"
 }
 
+# FileController patch: owner OR admin allowed.
 patch_file_manager(){
   local file="${TARGETS[FILE]}" admin="$1"
   [[ -f "$file" ]] || { log "Skip FileController (not found)"; return; }
@@ -97,72 +119,118 @@ patch_file_manager(){
   backup_file "$file"
   ensure_auth_use "$file"
 
+  # Insert snippet into every public function declaration
   awk -v admin="$admin" '
-  /public[[:space:]]+function[[:space:]]+(index|contents|download|store|rename|delete|move|compress|extract|upload)/ {
+  {
     print $0
-    print "        // GREYSYNC_PROTECT_FILE"
-    print "        try { $user = Auth::user(); } catch (\\Throwable $e) {"
-    print "            $user = (isset($request) && method_exists($request, \"user\")) ? $request->user() : null;"
-    print "        }"
-    print "        if (!$user) { abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu\"); }"
-    print "        $server = (isset($server) && is_object($server)) ? $server : null;"
-    print "        if (!$server && isset($request) && is_object($request)) {"
-    print "            $server = $request->attributes->get(\"server\") ?? (method_exists($request, \"route\") ? $request->route(\"server\") : null);"
-    print "        }"
-    print "        if (!$server && isset($request) && method_exists($request, \"input\")) {"
-    print "            $sid = $request->input(\"server_id\") ?? $request->input(\"id\") ?? null;"
-    print "            if ($sid) { try { $server = \\\\Pterodactyl\\\\Models\\\\Server::find($sid); } catch (\\Throwable $e) { $server = null; } }"
-    print "        }"
-    print "        $ownerId = ($server && is_object($server)) ? ($server->owner_id ?? $server->user_id ?? null) : null;"
-    print "        if ($user->id != " admin " && (!$ownerId || $ownerId != $user->id)) { abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu\"); }"
-    next
+    if ($0 ~ /public[[:space:]]+function[[:space:]]+[A-Za-z0-9_]+\s*\([^)]*\)\s*\{/) {
+      # inject owner/admin guard; escape $ with backslash for PHP output
+      print "        // GREYSYNC_PROTECT_FILE"
+      print "        \\$user = null;"
+      print "        try { \\$user = Auth::user(); } catch (\\\\Throwable \\$e) {"
+      print "            \\$user = (isset(\\$request) && method_exists(\\$request, \"user\")) ? \\$request->user() : null;"
+      print "        }"
+      print "        if (!\\$user) { abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu\"); }"
+      print ""
+      print "        // try multiple ways to obtain server object"
+      print "        \\$server = (isset(\\$server) && is_object(\\$server)) ? \\$server : null;"
+      print "        if (!\\$server && isset(\\$request) && is_object(\\$request)) {"
+      print "            \\$server = \\$request->attributes->get(\"server\") ?? (method_exists(\\$request, \"route\") ? \\$request->route(\"server\") : null);"
+      print "        }"
+      print "        if (!\\$server && isset(\\$request) && method_exists(\\$request, \"input\")) {"
+      print "            \\$sid = \\$request->input(\"server_id\") ?? \\$request->input(\"id\") ?? null;"
+      print "            if (\\$sid) {"
+      print "                try { \\$server = \\\\Pterodactyl\\\\Models\\\\Server::find(\\$sid); } catch (\\\\Throwable \\$e) { \\$server = null; }"
+      print "            }"
+      print "        }"
+      print "        \\$ownerId = (\\$server && is_object(\\$server)) ? (\\$server->owner_id ?? \\$server->user_id ?? null) : null;"
+      print "        if (\\$user->id != " admin " && (!\\$ownerId || \\$ownerId != \\$user->id)) {"
+      print "            // optional placeholder"
+      print "            \\$placeholder = storage_path(\"app/greysync_protect_placeholder.png\");"
+      print "            if (file_exists(\\$placeholder)) { return response()->file(\\$placeholder); }"
+      print "            abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu\");"
+      print "        }"
+    }
   }
-  { print }
   ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
 
-  php_check_file "$file" || { err "FileController syntax error"; restore_from_dir "$BACKUP_DIR"; return 1; }
-  ok "Patched: FileController"
+  # validate
+  if ! php_check_file "$file"; then
+    err "FileController syntax error after patch; restoring backup"
+    restore_from_dir "$BACKUP_DIR"
+    return 1
+  fi
+
+  ok "Patched: FileController (owner or super-admin guard applied to public functions)."
 }
 
+# patch user delete safely (escape chars correctly)
 patch_user_delete(){
   local file="${TARGETS[USER]}" admin="$1"
   [[ -f "$file" ]] || { log "Skip UserController"; return; }
   grep -q "GREYSYNC_PROTECT_USER" "$file" && { log "Already patched UserController"; return; }
   backup_file "$file"
+
   awk -v admin="$admin" '
-  BEGIN{patched=0}
-  /public[[:space:]]+function[[:space:]]+delete/ && patched==0{
+  {
     print $0
-    print "        // GREYSYNC_PROTECT_USER"
-    print "        if (isset(\\$request) && \\$request->user()->id != " admin ") {"
-    print "            throw new \\\\Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus user\");"
-    print "        }"
-    patched=1; next
+    if ($0 ~ /public[[:space:]]+function[[:space:]]+delete\s*\([^)]*\)\s*\{/) {
+      print "        // GREYSYNC_PROTECT_USER"
+      print "        if (isset(\\$request) && \\$request->user()->id != " admin ") {"
+      print "            throw new \\\\Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus user\");"
+      print "        }"
+    }
   }
-  {print}
   ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
-  php_check_file "$file" || { err "UserController syntax error"; return 1; }
+
+  if ! php_check_file "$file"; then
+    err "UserController syntax error after patch; restoring backup"
+    restore_from_dir "$BACKUP_DIR"
+    return 1
+  fi
+
   ok "Patched: UserController"
 }
 
+# patch server deletion service safely
 patch_server_delete_service(){
   local file="${TARGETS[SERVER]}" admin="$1"
   [[ -f "$file" ]] || { log "Skip ServerDeletionService"; return; }
   grep -q "GREYSYNC_PROTECT_SERVER" "$file" && { log "Already patched ServerDeletionService"; return; }
-  backup_file "$file"; ensure_auth_use "$file"
+  backup_file "$file"
+  ensure_auth_use "$file"
+
   awk -v admin="$admin" '
-  BEGIN{patched=0}
-  /public[[:space:]]+function[[:space:]]+handle/ && patched==0{
+  {
     print $0
-    print "        // GREYSYNC_PROTECT_SERVER"
-    print "        $user = Auth::user();"
-    print "        if ($user && $user->id != " admin ") { throw new \\\\Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus server\"); }"
-    patched=1; next
+    if ($0 ~ /public[[:space:]]+function[[:space:]]+handle\s*\([^)]*\)\s*\{/) {
+      print "        // GREYSYNC_PROTECT_SERVER"
+      print "        \\$user = null;"
+      print "        try { \\$user = Auth::user(); } catch (\\\\Throwable \\$e) {"
+      print "            if (isset(\\$request) && method_exists(\\$request, \"user\")) { \\$user = \\$request->user(); }"
+      print "        }"
+      print "        if (\\$user && \\$user->id != " admin ") { throw new \\\\Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus server\"); }"
+    }
   }
-  {print}
   ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
-  php_check_file "$file" || { err "ServerDeletionService syntax error"; return 1; }
+
+  if ! php_check_file "$file"; then
+    err "ServerDeletionService syntax error after patch; restoring backup"
+    restore_from_dir "$BACKUP_DIR"
+    return 1
+  fi
+
   ok "Patched: ServerDeletionService"
+}
+
+# helper to patch admin-only targets (USER, SERVER, NODE, NEST, SETTINGS, DATABASES, LOCATIONS)
+patch_admin_targets(){
+  local admin="$1"
+  for tag in USER SERVER NODE NEST SETTINGS DATABASES LOCATIONS; do
+    local f="${TARGETS[$tag]}"
+    [[ -n "$f" ]] || continue
+    insert_guard "$f" "$tag" "$admin"
+  done
 }
 
 fix_laravel(){
@@ -182,12 +250,16 @@ install_all(){
   ensure_backup_parent; mkdir -p "$BACKUP_DIR"; save_latest_symlink
   local admin="${1:-$ADMIN_ID_DEFAULT}"
   log "Installing GreySync Protect v$VERSION (admin_id=$admin)"
+  mkdir -p "$(dirname "$STORAGE")"
   echo '{ "status":"on" }' > "$STORAGE"
+  mkdir -p "$(dirname "$IDPROTECT")"
   echo '{ "superAdminId": '"$admin"' }' > "$IDPROTECT"
-  patch_user_delete "$admin"
-  patch_server_delete_service "$admin"
-  for tag in NODE NEST SETTINGS DATABASES LOCATIONS; do insert_guard "${TARGETS[$tag]}" "$tag" "$admin"; done
+
+  # patch admin-only targets
+  patch_admin_targets "$admin"
+  # patch file manager (owner or admin)
   patch_file_manager "$admin"
+
   fix_laravel || true
   ok "✅ GreySync Protect installed. Backup in $BACKUP_DIR"
   IN_INSTALL=false
@@ -206,8 +278,7 @@ admin_patch(){
   [[ -z "$newid" || ! "$newid" =~ ^[0-9]+$ ]] && { err "Usage: $0 adminpatch <id>"; return 1; }
   echo '{ "superAdminId": '"$newid"' }' > "$IDPROTECT"
   ok "SuperAdmin ID set -> $newid"
-  patch_user_delete "$newid"; patch_server_delete_service "$newid"
-  for tag in NODE NEST SETTINGS DATABASES LOCATIONS; do insert_guard "${TARGETS[$tag]}" "$tag" "$newid"; done
+  patch_admin_targets "$newid"
   patch_file_manager "$newid"
   fix_laravel || true
 }
