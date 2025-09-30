@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-# GreySync Protect (Simple) v1.6.5
-# Single-file installer/patcher for Pterodactyl controllers with safe rollback.
-# Proteksi sederhana: hanya super-admin & pemilik server yang boleh akses file manager.
-# Usage:
-#   sudo ./greysync.sh install [ADMIN_ID]
-#   sudo ./greysync.sh uninstall
-#   sudo ./greysync.sh restore
-#   sudo ./greysync.sh adminpatch <id>
-#   sudo ./greysync.sh movesession <current_path> [dest_dir]
-#   sudo ./greysync.sh help
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -22,9 +12,9 @@ STORAGE="${STORAGE:-$ROOT/storage/app/greysync_protect.json}"
 IDPROTECT="${IDPROTECT:-$ROOT/storage/app/idprotect.json}"
 ADMIN_ID_DEFAULT="${ADMIN_ID_DEFAULT:-1}"
 LOGFILE="${LOGFILE:-/var/log/greysync_protect.log}"
-SESSION_PROTECT_DIR="${SESSION_PROTECT_DIR:-/var/lib/greysync_sessions}"
 
-VERSION="1.6.5"
+YARN_BUILD=false
+VERSION="1.6.3"
 IN_INSTALL=false
 EXIT_CODE=0
 
@@ -99,87 +89,55 @@ insert_guard(){
   ok "Patched: $file"
 }
 
-# SIMPLE patch for FileController: inject into ALL public functions a short owner/admin check
 patch_file_manager(){
   local file="${TARGETS[FILE]}" admin="$1"
   [[ -f "$file" ]] || { log "Skip FileController (not found)"; return; }
-
   grep -q "GREYSYNC_PROTECT_FILE" "$file" && { log "Already patched FileController"; return; }
 
   backup_file "$file"
   ensure_auth_use "$file"
 
-  # simple PHP snippet (placeholder __GREY_ADMIN_ID__ will be replaced)
-  read -r -d '' php_snip <<'PHP_SNIP' || true
-        // GREYSYNC_PROTECT_FILE
-        // GreySync: hanya super-admin atau owner server yang boleh akses file manager
-        try {
-            $user = Auth::user();
-        } catch (\Throwable $e) {
-            $user = (isset($request) && method_exists($request,'user')) ? $request->user() : null;
-        }
-        if (!$user) {
-            abort(403, "❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu");
-        }
-
-        // dapatkan objek server dari berbagai kemungkinan (param, request attrs, route model)
-        $server = isset($server) && is_object($server) ? $server : null;
-        if (!$server && isset($request) && is_object($request)) {
-            $server = $request->attributes->get('server') ?? (method_exists($request,'route') ? $request->route('server') : null);
-        }
-        // fallback: ambil server id dari input lalu cari model
-        if (!$server && isset($request) && method_exists($request,'input')) {
-            $sid = $request->input('server_id') ?? $request->input('id') ?? null;
-            if ($sid) {
-                try {
-                    $server = \Pterodactyl\Models\Server::find($sid);
-                } catch (\Throwable $e) { $server = null; }
-            }
-        }
-
-        $ownerId = ($server && is_object($server)) ? ($server->owner_id ?? $server->user_id ?? null) : null;
-
-        if ($user->id != __GREY_ADMIN_ID__ && (!$ownerId || $ownerId != $user->id)) {
-            abort(403, "❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu");
-        }
-PHP_SNIP
-
-  # replace placeholder with admin id
-  php_snip="${php_snip//__GREY_ADMIN_ID__/$admin}"
-
-  # escape for perl literal insertion
-  perl_snip=$(printf "%s" "$php_snip" | perl -pe 's/\\/\\\\/g; s/\$/\\\$/g; s/\@/\\@/g')
-
-  # Insert snippet after the opening brace of every 'public function name(...) {'
-  perl -0777 -i -pe '
-    $s = q!'"$perl_snip"'!;
-    s{(public\s+function\s+[A-Za-z0-9_]+\s*\([^)]*\)\s*\{)}{$1\n$s}gsi;
-  ' "$file" || true
-
-  # fallback: if not injected, insert near top of class after declaration
-  if ! grep -q "GREYSYNC_PROTECT_FILE" "$file"; then
-    awk -v snip="$php_snip" '
-      BEGIN{printed=0}
-      /class[[:space:]]+[A-Za-z0-9_]+/ && printed==0 {
-        print; getline;
-        print;
-        print "    // GREYSYNC_PROTECT_FILE_AUTO_INSERT";
-        print snip;
-        printed=1;
-        next;
-      }
-      {print}
-    ' "$file" > "$file.tmp" && mv "$file.tmp" "$file" || true
-  fi
-
-  # syntax check and rollback on error
+  awk -v admin="$admin" '
+  # cari semua public function yang sering dipakai FileController dan sisipkan snippet setelah pembukaan fungsi
+  /public[[:space:]]+function[[:space:]]+(index|contents|download|store|rename|delete|move|compress|extract|upload)/ {
+    print $0
+    print "        // GREYSYNC_PROTECT_FILE"
+    print "        // Hanya super-admin atau pemilik server yang boleh mengakses file manager"
+    print "        try { $user = Auth::user(); } catch (\\Throwable $e) {"
+    print "            $user = (isset($request) && method_exists($request, \"user\")) ? $request->user() : null;"
+    print "        }"
+    print "        if (!$user) { abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu\"); }"
+    print ""
+    print "        // Ambil objek server lewat beberapa kemungkinan (param, request attributes, route model, input fallback)"
+    print "        $server = (isset($server) && is_object($server)) ? $server : null;"
+    print "        if (!$server && isset($request) && is_object($request)) {"
+    print "            $server = $request->attributes->get(\"server\") ?? (method_exists($request, \"route\") ? $request->route(\"server\") : null);"
+    print "        }"
+    print "        if (!$server && isset($request) && method_exists($request, \"input\")) {"
+    print "            $sid = $request->input(\"server_id\") ?? $request->input(\"id\") ?? null;"
+    print "            if ($sid) {"
+    print "                try { $server = \\Pterodactyl\\Models\\Server::find($sid); } catch (\\Throwable $e) { $server = null; }"
+    print "            }"
+    print "        }"
+    print "        $ownerId = ($server && is_object($server)) ? ($server->owner_id ?? $server->user_id ?? null) : null;"
+    print "        if ($user->id != " admin " && (!$ownerId || $ownerId != $user->id)) {"
+    print "            // optional: return placeholder image if exists"
+    print "            $placeholder = storage_path(\"app/greysync_protect_placeholder.png\");"
+    print "            if (file_exists($placeholder)) { return response()->file($placeholder); }"
+    print "            abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu\");"
+    print "        }"
+    next
+  }
+  { print }
+  ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+  # cek syntax php, rollback jika error
   if ! php_check_file "$file"; then
     err "FileController syntax error after patch, restoring backup"
     restore_from_dir "$BACKUP_DIR"
     return 1
   fi
 
-  ok "Patched: FileController (simple proteksi semua public functions)."
+  ok "Patched: FileController (proteksi pada semua public functions)."
 }
 
 patch_user_delete(){
@@ -238,9 +196,7 @@ install_all(){
   ensure_backup_parent; mkdir -p "$BACKUP_DIR"; save_latest_symlink
   local admin="${1:-$ADMIN_ID_DEFAULT}"
   log "Installing GreySync Protect v$VERSION (admin_id=$admin)"
-  mkdir -p "$(dirname "$STORAGE")"
   echo '{ "status":"on" }' > "$STORAGE"
-  mkdir -p "$(dirname "$IDPROTECT")"
   echo '{ "superAdminId": '"$admin"' }' > "$IDPROTECT"
   patch_user_delete "$admin"
   patch_server_delete_service "$admin"
@@ -270,31 +226,6 @@ admin_patch(){
   fix_laravel || true
 }
 
-# movesession: move bot session file(s) to protected directory and set perms
-move_session_files(){
-  local src="$1"
-  local dest="${2:-$SESSION_PROTECT_DIR}"
-  if [[ -z "$src" ]]; then err "Usage: $0 movesession <current_path> [dest_dir]"; return 1; fi
-
-  sudo mkdir -p "$dest"
-  sudo chown www-data:www-data "$dest"
-  sudo chmod 700 "$dest"
-
-  # if src is directory, move all files inside; if file, move that file.
-  if [[ -d "$src" ]]; then
-    sudo mv "$src"/* "$dest"/ || true
-  else
-    sudo mv "$src" "$dest"/ || true
-  fi
-
-  sudo chown -R www-data:www-data "$dest"
-  sudo find "$dest" -type d -exec chmod 700 {} \;
-  sudo find "$dest" -type f -exec chmod 600 {} \;
-
-  ok "Moved session files to $dest and set secure permissions."
-  log "NOTE: Update your bot configuration to point to new path: $dest"
-}
-
 trap '_on_err' ERR
 _on_err(){ local rc=$?; [[ "$IN_INSTALL" = true ]] && { err "Error during install, rollback..."; restore_from_dir "$BACKUP_DIR" || true; fix_laravel || true; }; exit $rc; }
 
@@ -305,16 +236,14 @@ print_menu(){
   echo "2) Uninstall Protect"
   echo "3) Restore Backup"
   echo "4) Set SuperAdmin ID"
-  echo "5) Move session files to protected dir"
-  echo "6) Exit"
-  read -p "Pilih opsi [1-6]: " opt
+  echo "5) Exit"
+  read -p "Pilih opsi [1-5]: " opt
   case "$opt" in
     1) read -p "Admin ID (default $ADMIN_ID_DEFAULT): " aid; install_all "${aid:-$ADMIN_ID_DEFAULT}" ;;
     2) uninstall_all ;;
     3) restore_from_latest_backup && fix_laravel ;;
     4) read -p "SuperAdmin ID baru: " nid; admin_patch "$nid" ;;
-    5) read -p "Path session (file or dir): " sp; read -p "Dest (default $SESSION_PROTECT_DIR): " dp; move_session_files "$sp" "${dp:-$SESSION_PROTECT_DIR}" ;;
-    6) exit 0 ;;
+    5) exit 0 ;;
     *) echo "Pilihan tidak valid"; exit 1 ;;
   esac
 }
@@ -325,9 +254,7 @@ case "${1:-}" in
   uninstall) uninstall_all ;;
   restore) restore_from_latest_backup ;;
   adminpatch) admin_patch "$2" ;;
-  movesession) move_session_files "$2" "$3" ;;
-  help|--help|-h) echo "Usage: $0 {install|uninstall|restore|adminpatch <id>|movesession <src> [dest]}"; exit 0 ;;
-  *) err "Usage: $0 {install|uninstall|restore|adminpatch <id>|movesession <src> [dest]}"; exit 1 ;;
+  *) err "Usage: $0 {install|uninstall|restore|adminpatch <id>}"; exit 1 ;;
 esac
 
 exit $EXIT_CODE
