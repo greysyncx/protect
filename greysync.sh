@@ -45,9 +45,9 @@ php_bin() {
   for v in 8.3 8.2 8.1 8.0 7.4; do
     if command -v "php$v" >/dev/null 2>&1; then echo "php$v"; return 0; fi
   done
-  return 1
+  echo "php"
+  return 0
 }
-PHP="$(php_bin || true)"
 
 php_check_file() {
   local f="$1"
