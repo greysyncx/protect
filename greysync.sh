@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# GreySync Protect (Safe, Syah-style) v1.6.1
+# GreySync Protect (Safe) v1.6.3
 # Single-file installer/patcher for Pterodactyl controllers with safe rollback & build.
+# Adds file-manager protection: users can access files only on their own servers (admin can access all).
 # Usage:
 #   sudo ./greysync-protect.sh install [ADMIN_ID]
 #   sudo ./greysync-protect.sh uninstall
@@ -22,7 +23,7 @@ ADMIN_ID_DEFAULT="${ADMIN_ID_DEFAULT:-1}"
 LOGFILE="${LOGFILE:-/var/log/greysync_protect.log}"
 YARN_BUILD=true   # set to false to skip yarn build
 
-VERSION="1.6.1"
+VERSION="1.6.3"
 IN_INSTALL=false
 EXIT_CODE=0
 
@@ -35,6 +36,7 @@ declare -A TARGETS=(
   ["SETTINGS"]="$ROOT/app/Http/Controllers/Admin/Settings/IndexController.php"
   ["DATABASES"]="$ROOT/app/Http/Controllers/Admin/Databases/DatabaseController.php"
   ["LOCATIONS"]="$ROOT/app/Http/Controllers/Admin/Locations/LocationController.php"
+  ["FILE"]="$ROOT/app/Http/Controllers/Api/Client/Servers/FileController.php"
 )
 
 # Colors
@@ -174,6 +176,80 @@ insert_guard_into_first_method() {
   return 0
 }
 
+# --------- New: patch FileController (longgar) ----------
+patch_file_manager() {
+  local file="${TARGETS[FILE]}"
+  local admin_id="${1:-$ADMIN_ID_DEFAULT}"
+  [[ -f "$file" ]] || { log "Skip (FileController not found): $file"; return 0; }
+  if grep -q "GREYSYNC_PROTECT_FILE" "$file" 2>/dev/null; then
+    log "Already patched: FileController"
+    return 0
+  fi
+
+  backup_file "$file"
+  ensure_auth_use "$file"
+
+  # Insert guard into first relevant client-server file methods (index, download, contents, store, rename, delete)
+  awk -v admin="$admin_id" '
+  BEGIN{ in_sig=0; patched=0 }
+  {
+    line=$0
+    if (patched==0) {
+      # match common file methods in FileController
+      if (match(line, /public[[:space:]]+function[[:space:]]+(index|download|contents|store|rename|delete)[[:space:]]*\([^\)]*\)[[:space:]]*\{?/i)) {
+        # if brace is on same line
+        if (index(line,"{")>0) {
+          before = substr(line,1,index(line,"{"))
+          rem = substr(line,index(line,"{")+1)
+          print before
+          print "        // GREYSYNC_PROTECT_FILE"
+          print "        $user = Auth::user();"
+          print "        $server = (isset($request) ? $request->attributes->get(\"server\") : null);"
+          print "        if (!$user) { abort(403, \"❌ GreySync Protect: akses ditolak\"); }"
+          print "        if ($user->id != " admin " && (! $server || $server->owner_id != $user->id)) {"
+          print "            abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu\");"
+          print "        }"
+          if (length(rem)>0) print rem
+          patched=1
+          next
+        } else {
+          print line
+          in_sig=1
+          next
+        }
+      }
+      if (in_sig==1 && match(line,/^\s*{/)) {
+        print line
+        print "        // GREYSYNC_PROTECT_FILE"
+        print "        $user = Auth::user();"
+        print "        $server = (isset($request) ? $request->attributes->get(\"server\") : null);"
+        print "        if (!$user) { abort(403, \"❌ GreySync Protect: akses ditolak\"); }"
+        print "        if ($user->id != " admin " && (! $server || $server->owner_id != $user->id)) {"
+        print "            abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu\");"
+        print "        }"
+        in_sig=0
+        patched=1
+        next
+      }
+    }
+    print line
+  }
+  END {
+    # nothing else
+  }
+  ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+
+  if ! php_check_file "$file"; then
+    err "FileController syntax error after patch, restoring backup"
+    cp -af "$BACKUP_DIR/${file#$ROOT/}.bak" "$file" 2>/dev/null || true
+    return 2
+  fi
+
+  ok "Patched: FileController (file access longgar)"
+  return 0
+}
+# ---------- end patch_file_manager ----------
+
 patch_user_delete() {
   local file="${TARGETS[USER]}"
   local admin_id="$1"
@@ -279,21 +355,54 @@ fix_laravel() {
 run_yarn_build() {
   if [[ "$YARN_BUILD" = true && -f "$ROOT/package.json" ]]; then
     log "Running yarn build (may take a while)..."
-    if ! command -v yarn >/dev/null 2>&1; then
-      log "Installing yarn and nodejs (Node.js 16) first..."
+
+    # detect node and version
+    if ! command -v node >/dev/null 2>&1; then
+      log "Node.js not found, attempting to install Node.js 16 and yarn..."
       apt-get update -y >/dev/null 2>&1 || true
       apt-get remove -y nodejs >/dev/null 2>&1 || true
       curl -fsSL https://deb.nodesource.com/setup_16.x | bash - >/dev/null 2>&1 || true
       apt-get install -y nodejs >/dev/null 2>&1 || true
       npm i -g yarn >/dev/null 2>&1 || true
     fi
+
+    NODE_BIN="$(command -v node || true)"
+    NODE_VERSION=0
+    if [[ -n "$NODE_BIN" ]]; then
+      NODE_VERSION_RAW="$($NODE_BIN -v 2>/dev/null || echo v0)"
+      NODE_VERSION="$(echo "$NODE_VERSION_RAW" | sed 's/^v\([0-9]*\).*/\1/')"
+      log "Detected Node.js version: $NODE_VERSION_RAW"
+    fi
+
+    # For Node >= 17, apply OpenSSL legacy provider fix to avoid webpack errors
+    if [[ "$NODE_VERSION" -ge 17 ]]; then
+      export NODE_OPTIONS=--openssl-legacy-provider
+      log "${YELLOW}Applying NODE_OPTIONS=--openssl-legacy-provider for Node >= 17${RESET}"
+    fi
+
     pushd "$ROOT" >/dev/null 2>&1
     # ensure cross-env present (some panel builds require)
     yarn add --silent cross-env >/dev/null 2>&1 || true
-    if ! yarn build:production --silent --progress; then
-      err "yarn build failed (check logs). Continuing but panel front may be broken."
+
+    # prefer script if exists
+    if yarn run | grep -q "build:production"; then
+      if ! NODE_OPTIONS="${NODE_OPTIONS:-}" yarn build:production --silent --progress; then
+        err "yarn build failed (check logs). Continuing but panel front may be broken."
+      else
+        ok "Frontend build finished"
+      fi
     else
-      ok "Frontend build finished"
+      # fallback to generic webpack if available
+      if [[ -f node_modules/.bin/webpack ]]; then
+        if ! NODE_OPTIONS="${NODE_OPTIONS:-}" yarn run clean >/dev/null 2>&1 || true
+        if ! NODE_OPTIONS="${NODE_OPTIONS:-}" ./node_modules/.bin/webpack --mode production --silent --progress; then
+          err "webpack build failed (check logs). Continuing but panel front may be broken."
+        else
+          ok "Frontend webpack build finished"
+        fi
+      else
+        log "No build script or webpack found, skipping frontend build."
+      fi
     fi
     popd >/dev/null 2>&1
   else
@@ -321,6 +430,9 @@ install_all() {
     path="${TARGETS[$tag]}"
     insert_guard_into_first_method "$path" "$tag" "$admin_id" "index view show edit update create" || { err "Failed patching $tag"; return 2; }
   done
+
+  # File manager (longgar): owner-only + admin allowed
+  patch_file_manager "$admin_id" || { err "Failed patching FileController"; return 2; }
 
   # build & laravel fixes
   run_yarn_build || true
@@ -356,6 +468,7 @@ admin_patch() {
     path="${TARGETS[$tag]}"
     insert_guard_into_first_method "$path" "$tag" "$newid" "index view show edit update create" || true
   done
+  patch_file_manager "$newid" || true
   fix_laravel || true
 }
 
@@ -374,7 +487,7 @@ trap _on_error_trap ERR
 print_menu() {
   clear
   echo -e "${CYAN}====================================${RESET}"
-  echo -e "${CYAN}  GreySync Protect v$VERSION (Safe Syah)${RESET}"
+  echo -e "${CYAN}  GreySync Protect v$VERSION (Safe)${RESET}"
   echo -e "${CYAN}====================================${RESET}"
   echo "1) Install Protect (apply patches & build)"
   echo "2) Uninstall Protect (restore latest backup)"
