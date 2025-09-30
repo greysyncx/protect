@@ -14,7 +14,7 @@ IDPROTECT="${IDPROTECT:-$ROOT/storage/app/idprotect.json}"
 ADMIN_ID_DEFAULT="${ADMIN_ID_DEFAULT:-1}"
 LOGFILE="${LOGFILE:-/var/log/greysync_protect.log}"
 
-YARN_BUILD=false
+YARN_BUILD=true
 VERSION="1.6.3"
 IN_INSTALL=false
 EXIT_CODE=0
