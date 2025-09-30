@@ -120,9 +120,9 @@ insert_guard_into_first_method() {
   {
     line = $0
 
+    # Jika kita sedang nunggu { setelah function signature
     if (in_sig == 1) {
       print line
-      # saat ketemu { → inject guard di baris berikut
       if (match(line, /^\s*{/)) {
         print "        // GREYSYNC_PROTECT_" tag
         print "        $user = Auth::user();"
@@ -135,11 +135,15 @@ insert_guard_into_first_method() {
       next
     }
 
-    if (patched == 0 && match(line, /public[[:space:]]+function[[:space:]]+([A-Za-z0-9_]+)\s*\(/, m)) {
+    # Cari function publik
+    if (match(line, /public[[:space:]]+function[[:space:]]+([A-Za-z0-9_]+)\s*\(/, m)) {
       fname = m[1]
-      if (methods[fname]) {
-        # cek kalau ada { di baris yang sama
+      # Skip __construct supaya nggak bikin syntax error
+      if (fname == "__construct") { print line; next }
+
+      if (methods[fname] && patched == 0) {
         if (index(line, "{") > 0) {
+          # { ada di baris yang sama
           print line
           print "        // GREYSYNC_PROTECT_" tag
           print "        $user = Auth::user();"
@@ -149,7 +153,7 @@ insert_guard_into_first_method() {
           patched = 1
           next
         } else {
-          # belum ada { → tunggu sampai ketemu {
+          # Tunggu sampai ketemu { di baris berikut
           print line
           in_sig = 1
           next
@@ -157,12 +161,13 @@ insert_guard_into_first_method() {
       }
     }
 
+    # default: print tanpa perubahan
     print line
   }
   ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
 
   if ! php_check_file "$file"; then
-    err "Syntax error after patch $tag, restoring backup"
+    err "$tag syntax error after patch, restoring backup"
     cp -af "$BACKUP_DIR/${file#$ROOT/}.bak" "$file"
     return 2
   fi
