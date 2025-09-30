@@ -14,7 +14,7 @@ ADMIN_ID_DEFAULT="${ADMIN_ID_DEFAULT:-1}"
 LOGFILE="${LOGFILE:-/var/log/greysync_protect.log}"
 
 YARN_BUILD=false
-VERSION="1.6.3"
+VERSION="1.6.4"
 IN_INSTALL=false
 EXIT_CODE=0
 
@@ -98,46 +98,30 @@ patch_file_manager(){
   ensure_auth_use "$file"
 
   awk -v admin="$admin" '
-  # cari semua public function yang sering dipakai FileController dan sisipkan snippet setelah pembukaan fungsi
   /public[[:space:]]+function[[:space:]]+(index|contents|download|store|rename|delete|move|compress|extract|upload)/ {
     print $0
     print "        // GREYSYNC_PROTECT_FILE"
-    print "        // Hanya super-admin atau pemilik server yang boleh mengakses file manager"
     print "        try { $user = Auth::user(); } catch (\\Throwable $e) {"
     print "            $user = (isset($request) && method_exists($request, \"user\")) ? $request->user() : null;"
     print "        }"
     print "        if (!$user) { abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu\"); }"
-    print ""
-    print "        // Ambil objek server lewat beberapa kemungkinan (param, request attributes, route model, input fallback)"
     print "        $server = (isset($server) && is_object($server)) ? $server : null;"
     print "        if (!$server && isset($request) && is_object($request)) {"
     print "            $server = $request->attributes->get(\"server\") ?? (method_exists($request, \"route\") ? $request->route(\"server\") : null);"
     print "        }"
     print "        if (!$server && isset($request) && method_exists($request, \"input\")) {"
     print "            $sid = $request->input(\"server_id\") ?? $request->input(\"id\") ?? null;"
-    print "            if ($sid) {"
-    print "                try { $server = \\Pterodactyl\\Models\\Server::find($sid); } catch (\\Throwable $e) { $server = null; }"
-    print "            }"
+    print "            if ($sid) { try { $server = \\\\Pterodactyl\\\\Models\\\\Server::find($sid); } catch (\\Throwable $e) { $server = null; } }"
     print "        }"
     print "        $ownerId = ($server && is_object($server)) ? ($server->owner_id ?? $server->user_id ?? null) : null;"
-    print "        if ($user->id != " admin " && (!$ownerId || $ownerId != $user->id)) {"
-    print "            // optional: return placeholder image if exists"
-    print "            $placeholder = storage_path(\"app/greysync_protect_placeholder.png\");"
-    print "            if (file_exists($placeholder)) { return response()->file($placeholder); }"
-    print "            abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu\");"
-    print "        }"
+    print "        if ($user->id != " admin " && (!$ownerId || $ownerId != $user->id)) { abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu\"); }"
     next
   }
   { print }
   ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
-  # cek syntax php, rollback jika error
-  if ! php_check_file "$file"; then
-    err "FileController syntax error after patch, restoring backup"
-    restore_from_dir "$BACKUP_DIR"
-    return 1
-  fi
 
-  ok "Patched: FileController (proteksi pada semua public functions)."
+  php_check_file "$file" || { err "FileController syntax error"; restore_from_dir "$BACKUP_DIR"; return 1; }
+  ok "Patched: FileController"
 }
 
 patch_user_delete(){
@@ -150,7 +134,9 @@ patch_user_delete(){
   /public[[:space:]]+function[[:space:]]+delete/ && patched==0{
     print $0
     print "        // GREYSYNC_PROTECT_USER"
-    print "        if (isset($request) && $request->user()->id != "admin") { throw new Pterodactyl\\Exceptions\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus user\"); }"
+    print "        if (isset(\\$request) && \\$request->user()->id != " admin ") {"
+    print "            throw new \\\\Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus user\");"
+    print "        }"
     patched=1; next
   }
   {print}
@@ -170,7 +156,7 @@ patch_server_delete_service(){
     print $0
     print "        // GREYSYNC_PROTECT_SERVER"
     print "        $user = Auth::user();"
-    print "        if ($user && $user->id != "admin") { throw new Pterodactyl\\Exceptions\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus server\"); }"
+    print "        if ($user && $user->id != " admin ") { throw new \\\\Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus server\"); }"
     patched=1; next
   }
   {print}
