@@ -394,21 +394,15 @@ run_yarn_build() {
     else
       # fallback to generic webpack if available
       if [[ -f node_modules/.bin/webpack ]]; then
-        if ! NODE_OPTIONS="${NODE_OPTIONS:-}" yarn run clean >/dev/null 2>&1 || true
-        if ! NODE_OPTIONS="${NODE_OPTIONS:-}" ./node_modules/.bin/webpack --mode production --silent --progress; then
-          err "webpack build failed (check logs). Continuing but panel front may be broken."
-        else
-          ok "Frontend webpack build finished"
-        fi
-      else
-        log "No build script or webpack found, skipping frontend build."
-      fi
+    if NODE_OPTIONS="${NODE_OPTIONS:-}" yarn run clean >/dev/null 2>&1 &&
+       NODE_OPTIONS="${NODE_OPTIONS:-}" ./node_modules/.bin/webpack --mode production >/dev/null 2>&1; then
+        ok "Frontend webpack build finished"
+    else
+        err "webpack build failed (check logs). Continuing but panel frontend may be broken"
     fi
-    popd >/dev/null 2>&1
-  else
-    log "Skipping yarn build (no package.json or build disabled)."
-  fi
-}
+else
+    log "No build script or webpack found, skipping frontend build"
+fi
 
 install_all() {
   IN_INSTALL=true
