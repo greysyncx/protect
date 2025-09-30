@@ -99,44 +99,75 @@ ensure_auth_use() {
   fi
 }
 
-insert_guard_into_first_method(){
-  local file="$1"; local tag="$2"; local admin_id="$3"; local methods_csv="$4"
-  [[ -f "$file" ]] || { log "Skip (not found): $file"; return 0; }
-  if grep -q "GREYSYNC_PROTECT_${tag}" "$file"; then log "Already patched $tag"; return 0; fi
+insert_guard_into_first_method() {
+  local file="$1" tag="$2" admin_id="$3" methods="$4"
+  [[ -f "$file" ]] || { log "Skip $tag (not found): $file"; return 0; }
+  if grep -q "GREYSYNC_PROTECT_${tag}" "$file" 2>/dev/null; then
+    log "Already patched $tag"
+    return 0
+  fi
+
   backup_file "$file"
-  awk -v admin="$admin_id" -v tag="$tag" -v methods_csv="$methods_csv" '
-  BEGIN{ split(methods_csv, mlist, " "); in_sig=0; patched=0 }
+  ensure_auth_use "$file"
+
+  awk -v tag="$tag" -v admin="$admin_id" -v mlist="$methods" '
+  BEGIN {
+    split(mlist, arr, " ")
+    for (i in arr) methods[arr[i]] = 1
+    in_sig = 0
+    patched = 0
+  }
   {
-    line=$0
-    if (patched==0) {
-      if (in_sig==1 && match(line,/^\s*{/)) {
-        print line
-        print "        // GREYSYNC_PROTECT_"tag
+    line = $0
+
+    if (in_sig == 1) {
+      print line
+      # saat ketemu { → inject guard di baris berikut
+      if (match(line, /^\s*{/)) {
+        print "        // GREYSYNC_PROTECT_" tag
         print "        $user = Auth::user();"
-        print "        if (!$user || $user->id != " admin ") { abort(403, \"❌ GreySync Protect: Akses ditolak\"); }"
-        in_sig=0; patched=1; next
+        print "        if (!$user || $user->id != " admin ") {"
+        print "            abort(403, \"❌ GreySync Protect: Akses ditolak (" tag ")\");"
+        print "        }"
+        in_sig = 0
+        patched = 1
       }
-      for (i in mlist) {
-        pat = "public[[:space:]]+function[[:space:]]+"mlist[i]"[[:space:]]*\\([^)]*\\)[[:space:]]*\\{?"
-        if (match(line,pat)) {
-          if (index(line,"{")>0) {
-            before = substr(line,1,index(line,"{"))
-            rem = substr(line,index(line,"{")+1)
-            print before
-            print "        // GREYSYNC_PROTECT_"tag
-            print "        $user = Auth::user();"
-            print "        if (!$user || $user->id != " admin ") { abort(403, \"❌ GreySync Protect: Akses ditolak\"); }"
-            if (length(rem)>0) print rem
-            patched=1; next
-          } else { print line; in_sig=1; next }
+      next
+    }
+
+    if (patched == 0 && match(line, /public[[:space:]]+function[[:space:]]+([A-Za-z0-9_]+)\s*\(/, m)) {
+      fname = m[1]
+      if (methods[fname]) {
+        # cek kalau ada { di baris yang sama
+        if (index(line, "{") > 0) {
+          print line
+          print "        // GREYSYNC_PROTECT_" tag
+          print "        $user = Auth::user();"
+          print "        if (!$user || $user->id != " admin ") {"
+          print "            abort(403, \"❌ GreySync Protect: Akses ditolak (" tag ")\");"
+          print "        }"
+          patched = 1
+          next
+        } else {
+          # belum ada { → tunggu sampai ketemu {
+          print line
+          in_sig = 1
+          next
         }
       }
     }
+
     print line
   }
   ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
-  php_check_file "$file" || { err "Syntax error $file"; cp -af "$BACKUP_DIR/${file#$ROOT/}.bak" "$file" || true; return 2; }
-  ok "Patched: $file"
+
+  if ! php_check_file "$file"; then
+    err "Syntax error after patch $tag, restoring backup"
+    cp -af "$BACKUP_DIR/${file#$ROOT/}.bak" "$file"
+    return 2
+  fi
+
+  ok "Patched: $tag ($file)"
 }
 
 # Patch FileController: hanya owner atau super-admin
