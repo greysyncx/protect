@@ -74,40 +74,24 @@ ensure_auth_use(){
 insert_guard(){
   local file="$1" tag="$2" admin="$3"
   [[ -f "$file" ]] || { log "Skip (not found): $file"; return; }
-
-  # if already patched anywhere, skip (idempotent)
   grep -q "GREYSYNC_PROTECT_${tag}" "$file" && { log "Already patched $tag"; return; }
-
   backup_file "$file"
   ensure_auth_use "$file"
-
-  # admin-only snippet: escape $ and backslashes carefully
   awk -v admin="$admin" -v tag="$tag" '
-  {
-    # print lines normally, but when we see "public function" insert snippet after the opening {
+  BEGIN{patched=0}
+  /public[[:space:]]+function/ && patched==0{
     print $0
-    if ($0 ~ /public[[:space:]]+function[[:space:]]+[A-Za-z0-9_]+\s*\([^)]*\)\s*\{/) {
-      print "        // GREYSYNC_PROTECT_"tag
-      print "        \\$user = null;"
-      print "        try { \\$user = Auth::user(); } catch (\\\\Throwable \\$e) {"
-      print "            if (isset(\\$request) && method_exists(\\$request, \"user\")) { \\$user = \\$request->user(); }"
-      print "        }"
-      print "        if (!\\$user) { abort(403, \"❌ GreySync Protect: Akses terbatas - hubungi admin.\"); }"
-      print "        if (\\$user->id != " admin ") {"
-      print "            abort(403, \"❌ GreySync Protect: Akses terbatas - hanya super-admin yang boleh melakukan aksi ini.\");"
-      print "        }"
-    }
+    print "        // GREYSYNC_PROTECT_"tag
+    print "        \\$user = Auth::user();"
+    print "        if (!\\$user || \\$user->id != "admin") {"
+    print "            abort(403, \"❌ GreySync Protect: Akses ditolak ("tag")\");"
+    print "        }"
+    patched=1; next
   }
+  {print}
   ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
-
-  # validate php syntax
-  if ! php_check_file "$file"; then
-    err "Syntax error after patching $file — restoring backup"
-    restore_from_dir "$BACKUP_DIR"
-    return 1
-  fi
-
-  ok "Patched: $file (admin-only guard)"
+  php_check_file "$file" || { err "Syntax error $file"; return 1; }
+  ok "Patched: $file"
 }
 
 # FileController patch: owner OR admin allowed.
