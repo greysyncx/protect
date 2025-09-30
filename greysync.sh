@@ -1,5 +1,5 @@
 #!/bin/bash
-# GreySync Protect (No-Middleware) v1.5.2-nomw (improved full-patch)
+# GreySync Protect (No-Middleware) v1.5.2-nomw (fixed)
 ROOT="/var/www/pterodactyl"
 BACKUP_DIR="$ROOT/greysync_backups_$(date +%s)"
 
@@ -20,6 +20,7 @@ err() { echo -e "${RED}$1${RESET}"; }
 ok()  { echo -e "${GREEN}$1${RESET}"; }
 
 php_check() {
+  # Check PHP syntax; return 0 if ok, nonzero otherwise
   php -l "$1" >/dev/null 2>&1
   return $?
 }
@@ -46,7 +47,27 @@ restore_from_latest_backup() {
   return 0
 }
 
-# Improved patcher: safer insertion into specific controller methods
+# insert "use Illuminate\\Support\\Facades\\Auth;" after namespace if missing
+ensure_auth_use() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  if ! grep -q "Illuminate\\\\Support\\\\Facades\\\\Auth" "$file"; then
+    # insert after first namespace declaration
+    awk '
+    BEGIN { inserted=0 }
+    /namespace[ ]+[A-Za-z0-9_\\\]+;/ && inserted==0 {
+      print $0
+      print "use Illuminate\\Support\\Facades\\Auth;"
+      inserted=1
+      next
+    }
+    { print }
+    ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+    log "${YELLOW}Inserted Auth use into $file${RESET}"
+  fi
+}
+
+# Generic function: insert guard into first matching public function among list
 patch_admin_controller_flexible() {
   local ctrl="$1"
   local tag="$2"
@@ -60,29 +81,72 @@ patch_admin_controller_flexible() {
     return 0
   fi
 
-  # 1) ensure "use Illuminate\Support\Facades\Auth;" present after namespace
-  perl -0777 -pe '
-    if (/namespace\s+[^\r\n]+;/s && !/Illuminate\\\Support\\\Facades\\\Auth/) {
-      s/(namespace\s+[^\r\n]+;)/$1\nuse Illuminate\\\Support\\\Facades\\\Auth;\n/;
-    }
-  ' "$ctrl" > "$ctrl.tmp.use" && mv "$ctrl.tmp.use" "$ctrl"
+  # Ensure Auth facade is present
+  ensure_auth_use "$ctrl"
 
-  # 2) Try to insert guard into specific common admin methods.
-  # We'll attempt multiple method targets in order and insert guard inside the method body
-  # right after the opening brace line. We will not replace parentheses lines, just insert after "{\n".
-  perl -0777 -pe "
-    my \$a = $admin_id;
-    my \$patched = 0;
-    # targets: index, view, show, edit, update, create
-    if (/(public\\s+function\\s+(?:index|view|show|edit|update|create)\\s*\\([^\\)]*\\)\\s*\\{)/is) {
-      s/(public\\s+function\\s+(?:index|view|show|edit|update|create)\\s*\\([^\\)]*\\)\\s*\\{)/\$1\n        \\/\\/ GREYSYNC_PROTECT_${tag}\\n        \$user = Auth::user();\\n        if (!\$user || \$user->id != \$a) { abort(403, \\\"❌ GreySync Protect: Akses ditolak\\\"); }\\n/si;
-      \$patched = 1;
+  # Try to find one of the target methods and insert guard right after opening brace.
+  awk -v admin="$admin_id" -v tag="$tag" '
+  BEGIN {
+    in_sig=0; patched=0;
+    # methods to try in order
+    split("index view show edit update create", methods);
+  }
+  {
+    line=$0
+    if (patched==0) {
+      # if we are currently within a matched signature and see the opening brace,
+      # insert guard after it.
+      if (in_sig==1) {
+        if (match(line,/^\s*{/)) {
+          print line
+          print "        // GREYSYNC_PROTECT_"tag
+          print "        $user = Auth::user();"
+          print "        if (!$user || $user->id != " admin ") { abort(403, \"❌ GreySync Protect: Akses ditolak\"); }"
+          in_sig=0
+          patched=1
+          next
+        }
+        # if brace was on same line as signature (handled below), we won't be here.
+      }
+      # check if this line is a function signature of our targeted names
+      for (i in methods) {
+        pat = "public[[:space:]]+function[[:space:]]+"methods[i]"[[:space:]]*\\([^)]*\\)[[:space:]]*\\{?"
+        if (match(line,pat)) {
+          # if brace is on same line
+          if (index(line,"{") > 0) {
+            # insert guard after the brace on same line: print prefix then guard block
+            # split at first "{"
+            before = substr(line,1,index(line,"{"))
+            print before
+            print "        // GREYSYNC_PROTECT_"tag
+            print "        $user = Auth::user();"
+            print "        if (!$user || $user->id != " admin ") { abort(403, \"❌ GreySync Protect: Akses ditolak\"); }"
+            # print the remainder of line after "{"
+            rem = substr(line,index(line,"{")+1)
+            if (length(rem)>0) {
+              print rem
+            }
+            patched=1
+            in_sig=0
+            next
+          } else {
+            # signature line without brace; set flag so next brace line will get guard
+            print line
+            in_sig=1
+            next
+          }
+        }
+      }
     }
-    # fallback: find the first public function and insert (less preferred)
-    if (!\$patched && /(public\\s+function\\s+[a-zA-Z0-9_]+\\s*\\([^\\)]*\\)\\s*\\{)/is) {
-      s/(public\\s+function\\s+[a-zA-Z0-9_]+\\s*\\([^\\)]*\\)\\s*\\{)/\$1\n        \\/\\/ GREYSYNC_PROTECT_${tag}\\n        \$user = Auth::user();\\n        if (!\$user || \$user->id != \$a) { abort(403, \\\"❌ GreySync Protect: Akses ditolak\\\"); }\\n/si;
+    print line
+  }
+  END {
+    # fallback: if not patched, attempt to patch first public function
+    if (patched==0) {
+      # nothing here: we keep file unchanged; caller may choose fallback behavior
     }
-  " "$ctrl" > "$ctrl.tmp.patch" && mv "$ctrl.tmp.patch" "$ctrl"
+  }
+  ' "$ctrl" > "$ctrl.tmp" && mv "$ctrl.tmp" "$ctrl"
 
   # lint check
   if ! php_check "$ctrl"; then
@@ -103,13 +167,39 @@ patch_user_delete() {
     log "${YELLOW}Already patched: UserController${RESET}"; return 0
   fi
 
-  # insert guard right after method opening brace of delete method
-  perl -0777 -pe '
-    my $a = shift @ARGV;
-    if (/(public\s+function\s+delete\s*\([^\)]*\)\s*\{)/i) {
-      s/(public\s+function\s+delete\s*\([^\)]*\)\s*\{)/$1\n        \/\/ GREYSYNC_PROTECT_USER\n        if (isset($request) && $request->user()->id != $a) { throw new \\\\Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus user\"); }\n/;
+  # Insert guard into delete method (robust awk)
+  awk -v admin="$admin_id" '
+  BEGIN { in_sig=0; patched=0 }
+  {
+    line=$0
+    # match delete method signature (flexible)
+    if (patched==0 && match(line,/public[[:space:]]+function[[:space:]]+delete[[:space:]]*\([^\)]*\)[[:space:]]*\{?/i)) {
+      # if brace on same line
+      if (index(line,"{")>0) {
+        before = substr(line,1,index(line,"{"))
+        print before
+        print "        // GREYSYNC_PROTECT_USER"
+        print "        if (isset($request) && $request->user()->id != " admin ") { throw new Pterodactyl\\Exceptions\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus user\"); }"
+        rem = substr(line,index(line,"{")+1)
+        if (length(rem)>0) print rem
+        patched=1
+        next
+      } else {
+        print line
+        in_sig=1
+        next
+      }
+    } else if (in_sig==1 && match(line,/^\s*{/)) {
+      print line
+      print "        // GREYSYNC_PROTECT_USER"
+      print "        if (isset($request) && $request->user()->id != " admin ") { throw new Pterodactyl\\Exceptions\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus user\"); }"
+      in_sig=0
+      patched=1
+      next
     }
-  ' "$admin_id" "$USER_CONTROLLER" > "$USER_CONTROLLER.tmp" && mv "$USER_CONTROLLER.tmp" "$USER_CONTROLLER"
+    print line
+  }
+  ' "$USER_CONTROLLER" > "$USER_CONTROLLER.tmp" && mv "$USER_CONTROLLER.tmp" "$USER_CONTROLLER"
 
   if ! php_check "$USER_CONTROLLER"; then
     err "❌ UserController error — restoring backup"
@@ -127,21 +217,42 @@ patch_server_delete_service() {
     log "${YELLOW}Already patched: ServerDeletionService${RESET}"; return 0
   fi
 
-  # ensure Auth facade exists in file
-  if ! grep -q "Illuminate\\\\Support\\\\Facades\\\\Auth" "$SERVER_SERVICE"; then
-    perl -0777 -pe '
-      if (/namespace\s+[^\r\n]+;/s) {
-        s/(namespace\s+[^\r\n]+;)/$1\nuse Illuminate\\\Support\\\Facades\\\Auth;\n/;
-      }
-    ' "$SERVER_SERVICE" > "$SERVER_SERVICE.tmp.use" && mv "$SERVER_SERVICE.tmp.use" "$SERVER_SERVICE"
-  fi
+  # Ensure Auth facade exists
+  ensure_auth_use "$SERVER_SERVICE"
 
-  perl -0777 -pe '
-    my $a = shift @ARGV;
-    if (/(public\s+function\s+handle\s*\([^\)]*\)\s*\{)/i) {
-      s/(public\s+function\s+handle\s*\([^\)]*\)\s*\{)/$1\n        \/\/ GREYSYNC_PROTECT_SERVER\n        $user = Auth::user();\n        if ($user && $user->id != $a) { throw new \\\\Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus server\"); }\n/;
+  # Insert guard into handle(...) method
+  awk -v admin="$admin_id" '
+  BEGIN { in_sig=0; patched=0 }
+  {
+    line=$0
+    if (patched==0 && match(line,/public[[:space:]]+function[[:space:]]+handle[[:space:]]*\([^\)]*\)[[:space:]]*\{?/i)) {
+      if (index(line,"{")>0) {
+        before = substr(line,1,index(line,"{"))
+        print before
+        print "        // GREYSYNC_PROTECT_SERVER"
+        print "        $user = Auth::user();"
+        print "        if ($user && $user->id != " admin ") { throw new Pterodactyl\\Exceptions\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus server\"); }"
+        rem = substr(line,index(line,"{")+1)
+        if (length(rem)>0) print rem
+        patched=1
+        next
+      } else {
+        print line
+        in_sig=1
+        next
+      }
+    } else if (in_sig==1 && match(line,/^\s*{/)) {
+      print line
+      print "        // GREYSYNC_PROTECT_SERVER"
+      print "        $user = Auth::user();"
+      print "        if ($user && $user->id != " admin ") { throw new Pterodactyl\\Exceptions\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus server\"); }"
+      in_sig=0
+      patched=1
+      next
     }
-  ' "$admin_id" "$SERVER_SERVICE" > "$SERVER_SERVICE.tmp" && mv "$SERVER_SERVICE.tmp" "$SERVER_SERVICE"
+    print line
+  }
+  ' "$SERVER_SERVICE" > "$SERVER_SERVICE.tmp" && mv "$SERVER_SERVICE.tmp" "$SERVER_SERVICE"
 
   if ! php_check "$SERVER_SERVICE"; then
     err "❌ ServerDeletionService error — restoring backup"
@@ -190,7 +301,10 @@ uninstall_all() {
 
 admin_patch() {
   local newid="$1"
-  [[ -z "$newid" || ! "$newid" =~ ^[0-9]+$ ]] && { err "Usage: $0 adminpatch <numeric id>"; return 1; }
+  if [[ -z "$newid" || ! "$newid" =~ ^[0-9]+$ ]]; then
+    err "Usage: $0 adminpatch <numeric id>"
+    return 1
+  fi
   echo '{ "superAdminId": '"$newid"' }' > "$IDPROTECT"
   ok "SuperAdmin ID set -> $newid"
   patch_user_delete "$newid"
