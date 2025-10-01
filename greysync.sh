@@ -186,7 +186,7 @@ patch_user_delete(){
   local file="${TARGETS[USER]}"; local admin_id="$1"
   [[ -f "$file" ]] || { log "Skip UserController"; return 0; }
   if grep -q "GREYSYNC_PROTECT_USER" "$file"; then log "Already patched: UserController"; return 0; fi
-  backup_file "$file"
+  backup_file "$file"; ensure_auth_use "$file"
   awk -v admin="$admin_id" '
   BEGIN{in_sig=0; patched=0}
   {
@@ -196,13 +196,15 @@ patch_user_delete(){
         before=substr(line,1,index(line,"{"))
         print before
         print "        // GREYSYNC_PROTECT_USER"
-        print "        if (isset($request) && $request->user()->id != " admin ") { throw new Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus user\"); }"
+        print "        $user = Auth::user();"
+        print "        if (!$user || $user->id != " admin ") { throw new Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus user\"); }"
         rem=substr(line,index(line,"{")+1); if (length(rem)>0) print rem; patched=1; next
       } else { print line; in_sig=1; next }
     } else if (in_sig==1 && match(line,/^\s*{/)) {
       print line
       print "        // GREYSYNC_PROTECT_USER"
-      print "        if (isset($request) && $request->user()->id != " admin ") { throw new Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus user\"); }"
+      print "        $user = Auth::user();"
+      print "        if (!$user || $user->id != " admin ") { throw new Pterodactyl\\\\Exceptions\\\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus user\"); }"
       in_sig=0; patched=1; next
     }
     print line
