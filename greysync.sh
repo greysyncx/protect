@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GreySync Protect v1.6.6
+# GreySync Protect v1.6.7
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -14,7 +14,7 @@ IDPROTECT="${IDPROTECT:-$ROOT/storage/app/idprotect.json}"
 ADMIN_ID_DEFAULT="${ADMIN_ID_DEFAULT:-1}"
 LOGFILE="${LOGFILE:-/var/log/greysync_protect.log}"
 
-VERSION="1.6.6"
+VERSION="1.6.7"
 IN_INSTALL=false
 EXIT_CODE=0
 
@@ -67,12 +67,12 @@ patch_file_manager(){ local f="${TARGETS[FILE]}"; local aid="$1"; [[ -f "$f" ]] 
 patch_user_delete(){ local f="${TARGETS[USER]}"; local aid="$1"; [[ -f "$f" ]] || return; grep -Fq "GREYSYNC_PROTECT_USER" "$f" && return; backup_file "$f"; ensure_auth_use "$f"; local g="
         // GREYSYNC_PROTECT_USER
         \$user = Auth::user();
-        if (!\$user || (\$user->id != $aid && empty(\$user->root_admin))) { throw new Pterodactyl\\Exceptions\\DisplayException('❌ GreySync Protect: Tidak boleh hapus user'); }"; insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+delete\s*\([^)]*\)\s*\{' "$g" "GREYSYNC_PROTECT_USER"; ok "Patched UserController"; }
+        if (!\$user || (\$user->id != $aid && empty(\$user->root_admin))) { throw new Pterodactyl\\\\Exceptions\\\\DisplayException('❌ GreySync Protect: Tidak boleh hapus user'); }"; insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+delete\s*\([^)]*\)\s*\{' "$g" "GREYSYNC_PROTECT_USER"; ok "Patched UserController"; }
 
 patch_server_delete_service(){ local f="${TARGETS[SERVER]}"; local aid="$1"; [[ -f "$f" ]] || return; grep -Fq "GREYSYNC_PROTECT_SERVER" "$f" && return; backup_file "$f"; ensure_auth_use "$f"; local g="
         // GREYSYNC_PROTECT_SERVER
         \$user = Auth::user();
-        if (\$user && (\$user->id != $aid && empty(\$user->root_admin))) { throw new Pterodactyl\\Exceptions\\DisplayException('❌ GreySync Protect: Tidak boleh hapus server'); }"; insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+handle\s*\([^)]*\)\s*\{' "$g" "GREYSYNC_PROTECT_SERVER"; ok "Patched ServerDeletionService"; }
+        if (\$user && (\$user->id != $aid && empty(\$user->root_admin))) { throw new Pterodactyl\\\\Exceptions\\\\DisplayException('❌ GreySync Protect: Tidak boleh hapus server'); }"; insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+handle\s*\([^)]*\)\s*\{' "$g" "GREYSYNC_PROTECT_SERVER"; ok "Patched ServerDeletionService"; }
 
 insert_guard_into_first_method(){ local f="$1"; local tag="$2"; local aid="$3"; local m="$(echo "$4" | sed 's/ /|/g')"; [[ -f "$f" ]] || return; grep -Fq "GREYSYNC_PROTECT_${tag}" "$f" && return; backup_file "$f"; ensure_auth_use "$f"; local g="
         // GREYSYNC_PROTECT_$tag
