@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# GreySync Protect v1.6.7
+# GreySync Protect v1.6.8 (Final Fix)
+# SuperAdmin = bisa atur, RootAdmin = bisa atur, ServerOwner = kelola file sendiri
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -7,14 +8,14 @@ IFS=$'\n\t'
 ROOT="${ROOT:-/var/www/pterodactyl}"
 BACKUP_PARENT="${BACKUP_PARENT:-$ROOT/greysync_backups}"
 TIMESTAMP="$(date +%s)"
-BACKUP_DIR="${BACKUP_DIR:-$BACKUP_PARENT/greysync_$TIMESTAMP}"
+BACKUP_DIR="$BACKUP_PARENT/greysync_$TIMESTAMP"
 BACKUP_LATEST_LINK="$BACKUP_PARENT/latest"
-STORAGE="${STORAGE:-$ROOT/storage/app/greysync_protect.json}"
-IDPROTECT="${IDPROTECT:-$ROOT/storage/app/idprotect.json}"
+STORAGE="$ROOT/storage/app/greysync_protect.json"
+IDPROTECT="$ROOT/storage/app/idprotect.json"
 ADMIN_ID_DEFAULT="${ADMIN_ID_DEFAULT:-1}"
 LOGFILE="${LOGFILE:-/var/log/greysync_protect.log}"
 
-VERSION="1.6.7"
+VERSION="1.6.8"
 IN_INSTALL=false
 EXIT_CODE=0
 
@@ -45,7 +46,7 @@ php_bin() {
 }
 PHP="$(php_bin || true)"
 
-php_check_file(){ [[ -n "$PHP" && -f "$1" ]] && ! "$PHP" -l "$1" >/dev/null 2>&1 && return 1 || return 0; }
+php_check_file(){ [[ -n "$PHP" && -f "$1" ]] || return 1; "$PHP" -l "$1" >/dev/null 2>&1; }
 
 backup_file(){ local f="$1"; [[ -f "$f" ]] && { mkdir -p "$BACKUP_DIR/$(dirname "${f#$ROOT/}")"; cp -af "$f" "$BACKUP_DIR/${f#$ROOT/}.bak"; log "Backup: $f"; }; }
 restore_from_dir(){ [[ -d "$1" ]] || { err "Backup dir not found: $1"; return 1; }; find "$1" -type f -name "*.bak" -print0 | while IFS= read -r -d '' f; do rel="${f#$1/}"; target="$ROOT/${rel%.bak}"; mkdir -p "$(dirname "$target")"; cp -af "$f" "$target"; log "Restored: $target"; done; }
@@ -53,7 +54,7 @@ restore_from_latest_backup(){ local latest="$(readlink -f "$BACKUP_LATEST_LINK" 
 
 ensure_auth_use(){ local f="$1"; [[ -f "$f" ]] || return; grep -Fq "Illuminate\\Support\\Facades\\Auth" "$f" || sed -i "$(grep -n '^namespace ' "$f" | head -n1 | cut -d: -f1)a use Illuminate\\Support\\Facades\\Auth;" "$f"; }
 
-insert_guard_after_open_brace_multiline(){ local f="$1"; local func="$2"; local guard="$3"; local marker="$4"; grep -Fq "$marker" "$f" && { log "Skip ($marker)"; return; }; perl -0777 -pe 's/('"$func"')/$1\n'"$guard"'/si' "$f" > "$f.tmp" && mv "$f.tmp" "$f"; }
+insert_guard_after_open_brace_multiline(){ local f="$1"; local func="$2"; local guard="$3"; local marker="$4"; grep -Fq "$marker" "$f" && { log "Skip ($marker)"; return; }; perl -0777 -pe "s/($func)/\$1\n$guard/si" "$f" > "$f.tmp" && mv "$f.tmp" "$f"; }
 
 patch_file_manager(){ local f="${TARGETS[FILE]}"; local aid="$1"; [[ -f "$f" ]] || return; grep -Fq "GREYSYNC_PROTECT_FILE_SAFE" "$f" && return; backup_file "$f"; ensure_auth_use "$f"; local guard="
         // GREYSYNC_PROTECT_FILE_SAFE
@@ -67,12 +68,12 @@ patch_file_manager(){ local f="${TARGETS[FILE]}"; local aid="$1"; [[ -f "$f" ]] 
 patch_user_delete(){ local f="${TARGETS[USER]}"; local aid="$1"; [[ -f "$f" ]] || return; grep -Fq "GREYSYNC_PROTECT_USER" "$f" && return; backup_file "$f"; ensure_auth_use "$f"; local g="
         // GREYSYNC_PROTECT_USER
         \$user = Auth::user();
-        if (!\$user || (\$user->id != $aid && empty(\$user->root_admin))) { throw new Pterodactyl\\\\Exceptions\\\\DisplayException('❌ GreySync Protect: Tidak boleh hapus user'); }"; insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+delete\s*\([^)]*\)\s*\{' "$g" "GREYSYNC_PROTECT_USER"; ok "Patched UserController"; }
+        if (!\$user || (\$user->id != $aid && empty(\$user->root_admin))) { throw new Pterodactyl\\Exceptions\\DisplayException('❌ GreySync Protect: Tidak boleh hapus user'); }"; insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+delete\s*\([^)]*\)\s*\{' "$g" "GREYSYNC_PROTECT_USER"; ok "Patched UserController"; }
 
 patch_server_delete_service(){ local f="${TARGETS[SERVER]}"; local aid="$1"; [[ -f "$f" ]] || return; grep -Fq "GREYSYNC_PROTECT_SERVER" "$f" && return; backup_file "$f"; ensure_auth_use "$f"; local g="
         // GREYSYNC_PROTECT_SERVER
         \$user = Auth::user();
-        if (\$user && (\$user->id != $aid && empty(\$user->root_admin))) { throw new Pterodactyl\\\\Exceptions\\\\DisplayException('❌ GreySync Protect: Tidak boleh hapus server'); }"; insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+handle\s*\([^)]*\)\s*\{' "$g" "GREYSYNC_PROTECT_SERVER"; ok "Patched ServerDeletionService"; }
+        if (\$user && (\$user->id != $aid && empty(\$user->root_admin))) { throw new Pterodactyl\\Exceptions\\DisplayException('❌ GreySync Protect: Tidak boleh hapus server'); }"; insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+handle\s*\([^)]*\)\s*\{' "$g" "GREYSYNC_PROTECT_SERVER"; ok "Patched ServerDeletionService"; }
 
 insert_guard_into_first_method(){ local f="$1"; local tag="$2"; local aid="$3"; local m="$(echo "$4" | sed 's/ /|/g')"; [[ -f "$f" ]] || return; grep -Fq "GREYSYNC_PROTECT_${tag}" "$f" && return; backup_file "$f"; ensure_auth_use "$f"; local g="
         // GREYSYNC_PROTECT_$tag
