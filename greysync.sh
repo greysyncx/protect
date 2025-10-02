@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GreySync Protect v1.6.9 (Auto-Fix Final)
+# GreySync Protect v1.6.9 (Clean Final)
 # SuperAdmin = full access, RootAdmin = full access, ServerOwner = kelola file sendiri
 
 set -euo pipefail
@@ -32,13 +32,16 @@ declare -A TARGETS=(
   ["FILE"]="$ROOT/app/Http/Controllers/Api/Client/Servers/FileController.php"
 )
 
+# Colors
 RED="\033[1;31m"; GREEN="\033[1;32m"; CYAN="\033[1;36m"; YELLOW="\033[1;33m"; RESET="\033[0m"
 
+# Logging
 log(){ echo -e "$(date -u +'%Y-%m-%dT%H:%M:%SZ') - $*" | tee -a "$LOGFILE"; }
 err(){ echo -e "${RED}$*${RESET}" | tee -a "$LOGFILE" >&2; EXIT_CODE=1; }
 ok(){ echo -e "${GREEN}$*${RESET}" | tee -a "$LOGFILE"; }
 warn(){ echo -e "${YELLOW}$*${RESET}" | tee -a "$LOGFILE"; }
 
+# PHP binary finder
 php_bin(){
   if command -v php >/dev/null 2>&1; then echo "php"; return; fi
   for v in 8.3 8.2 8.1 8.0 7.4; do
@@ -49,6 +52,7 @@ PHP="$(php_bin || true)"
 
 php_check_file(){ [[ -n "$PHP" && -f "$1" ]] || return 1; "$PHP" -l "$1" >/dev/null 2>&1; }
 
+# ================== UTIL ==================
 check_target_file(){
   local f="$1"; local tag="$2"
   if [[ ! -f "$f" ]]; then
@@ -79,19 +83,41 @@ restore_from_latest_backup(){
   restore_from_dir "$latest"
 }
 
+# Tambah Auth facade
 ensure_auth_use(){
   local f="$1"; [[ -f "$f" ]] || return
-  grep -Fq "Illuminate\\Support\\Facades\\Auth" "$f" || \
-    sed -i "$(grep -n '^namespace ' "$f" | head -n1 | cut -d: -f1)a use Illuminate\\Support\\Facades\\Auth;" "$f"
+  grep -Fq "Illuminate\\Support\\Facades\\Auth" "$f" && return
+  local ln
+  ln=$(grep -n '^namespace ' "$f" | head -n1 | cut -d: -f1) || ln=""
+  if [[ -n "$ln" ]]; then
+    awk -v n="$ln" 'NR==n{print; print "use Illuminate\\Support\\Facades\\Auth;"; next}1' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    log "🔧 Added Illuminate\\Support\\Facades\\Auth to $f"
+  fi
 }
 
+# Sisipkan guard
 insert_guard_after_open_brace_multiline(){
-  local f="$1"; local func="$2"; local guard="$3"; local marker="$4"
+  local f="$1"; local func_regex="$2"; local guard="$3"; local marker="$4"
   grep -Fq "$marker" "$f" && { log "⚠️ Skip ($marker already)"; return; }
-  perl -0777 -pe "s/($func)/\$1\n$guard/si" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+
+  local line
+  line=$(grep -n -E "$func_regex" "$f" | head -n1 | cut -d: -f1) || line=""
+  [[ -z "$line" ]] && { warn "⚠️ Function pattern not found in $f ($func_regex)"; return 1; }
+
+  local total; total=$(wc -l < "$f")
+  local i="$line"; local insert_line="$line"
+  while [ "$i" -le $((line+10)) ] && [ "$i" -le "$total" ]; do
+    if sed -n "${i}p" "$f" | grep -q '{'; then
+      insert_line="$i"; break
+    fi
+    i=$((i+1))
+  done
+
+  awk -v n="$insert_line" -v g="$guard" 'NR==n{print; print g; next}1' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  log "✅ Inserted guard in $f (line $insert_line)"
 }
 
-# ========== PATCHES ==========
+# ================== PATCHES ==================
 patch_file_manager(){
   local f="${TARGETS[FILE]}"; local aid="$1"; check_target_file "$f" "FILE" || return
   grep -Fq "GREYSYNC_PROTECT_FILE_SAFE" "$f" && return
@@ -104,7 +130,7 @@ patch_file_manager(){
         if (\$user->id != $aid && empty(\$user->root_admin) && (!\$server || \$server->owner_id != \$user->id)) {
             abort(403, '❌ GreySync Protect: File bukan milikmu!');
         }"
-  insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+(store|rename|delete|compress|decompress|replace|move|copy)\s*\([^)]*\)\s*\{' "$guard" "GREYSYNC_PROTECT_FILE_SAFE"
+  insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+(store|rename|delete|compress|decompress|replace|move|copy)\s*\(' "$guard" "GREYSYNC_PROTECT_FILE_SAFE"
   php_check_file "$f" || cp -af "$BACKUP_DIR/${f#$ROOT/}.bak" "$f"
   ok "✅ Patched FileController"
 }
@@ -119,7 +145,7 @@ patch_user_delete(){
         if (!\$user || (\$user->id != $aid && empty(\$user->root_admin))) {
             throw new Pterodactyl\\Exceptions\\DisplayException('❌ GreySync Protect: Tidak boleh hapus user');
         }"
-  insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+delete\s*\([^)]*\)\s*\{' "$g" "GREYSYNC_PROTECT_USER"
+  insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+delete\s*\(' "$g" "GREYSYNC_PROTECT_USER"
   ok "✅ Patched UserController"
 }
 
@@ -133,7 +159,7 @@ patch_server_delete_service(){
         if (\$user && (\$user->id != $aid && empty(\$user->root_admin))) {
             throw new Pterodactyl\\Exceptions\\DisplayException('❌ GreySync Protect: Tidak boleh hapus server');
         }"
-  insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+handle\s*\([^)]*\)\s*\{' "$g" "GREYSYNC_PROTECT_SERVER"
+  insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+handle\s*\(' "$g" "GREYSYNC_PROTECT_SERVER"
   ok "✅ Patched ServerDeletionService"
 }
 
@@ -148,22 +174,27 @@ insert_guard_into_first_method(){
         if (!\$user || (\$user->id != $aid && empty(\$user->root_admin))) {
             abort(403, '❌ GreySync Protect: Akses ditolak');
         }"
-  insert_guard_after_open_brace_multiline "$f" "public\s+function\s+($m)\s*\([^)]*\)\s*\{" "$g" "GREYSYNC_PROTECT_${tag}"
+  insert_guard_after_open_brace_multiline "$f" "public\s+function\s+($m)\s*\(" "$g" "GREYSYNC_PROTECT_${tag}"
   ok "✅ Patched $tag"
 }
 
-# ========== SYSTEM ==========
+# ================== SYSTEM ==================
 fix_laravel(){
-  cd "$ROOT"
-  [[ -n "$PHP" ]] && { $PHP artisan config:clear; $PHP artisan cache:clear; $PHP artisan route:clear; $PHP artisan view:clear; }
+  cd "$ROOT" || return
+  # Generate APP_KEY kalau kosong
+  if [[ -f "$ROOT/.env" ]] && ! grep -q '^APP_KEY=' "$ROOT/.env"; then
+    [[ -n "$PHP" ]] && { log "🔑 APP_KEY missing — generating"; $PHP artisan key:generate --force >/dev/null 2>&1 || warn "❗ artisan key:generate failed"; }
+  fi
+  [[ -n "$PHP" ]] && { $PHP artisan config:clear >/dev/null 2>&1 || true; $PHP artisan cache:clear >/dev/null 2>&1 || true; $PHP artisan route:clear >/dev/null 2>&1 || true; $PHP artisan view:clear >/dev/null 2>&1 || true; }
   chown -R www-data:www-data "$ROOT" >/dev/null 2>&1 || true
   chmod -R 755 "$ROOT/storage" "$ROOT/bootstrap/cache" >/dev/null 2>&1 || true
   systemctl restart nginx >/dev/null 2>&1 || true
   local php_fpm="$(systemctl list-units --type=service --all | grep -oE 'php[0-9]+(\.[0-9]+)?-fpm' | head -n1 || true)"
-  [[ -n "$php_fpm" ]] && systemctl restart "$php_fpm"
+  [[ -n "$php_fpm" ]] && systemctl restart "$php_fpm" || true
   ok "♻️ Laravel cache cleared & services restarted"
 }
 
+# ================== INSTALL/UNINSTALL ==================
 install_all(){
   IN_INSTALL=true
   mkdir -p "$BACKUP_DIR"; ln -sfn "$BACKUP_DIR" "$BACKUP_LATEST_LINK"
@@ -206,7 +237,7 @@ admin_patch(){
 
 trap '[[ "$IN_INSTALL" = true ]] && { err "Install failed, rollback"; restore_from_dir "$BACKUP_DIR"; fix_laravel; }; exit $?' ERR
 
-# Menu
+# ================== MENU ==================
 print_menu(){
   clear
   echo -e "${CYAN}GreySync Protect v$VERSION${RESET}"
@@ -226,7 +257,7 @@ print_menu(){
   esac
 }
 
-# CLI args
+# ================== CLI ==================
 case "${1:-}" in
   install) install_all "${2:-$ADMIN_ID_DEFAULT}";;
   uninstall) uninstall_all;;
