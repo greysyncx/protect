@@ -181,17 +181,41 @@ insert_guard_into_first_method(){
 # ================== SYSTEM ==================
 fix_laravel(){
   cd "$ROOT" || return
-  # Generate APP_KEY kalau kosong
-  if [[ -f "$ROOT/.env" ]] && ! grep -q '^APP_KEY=' "$ROOT/.env"; then
-    [[ -n "$PHP" ]] && { log "🔑 APP_KEY missing — generating"; $PHP artisan key:generate --force >/dev/null 2>&1 || warn "❗ artisan key:generate failed"; }
+  if [[ ! -f "$ROOT/.env" ]]; then
+    if [[ -f "$ROOT/.env.example" ]]; then
+      cp "$ROOT/.env.example" "$ROOT/.env"
+      log "📄 .env tidak ada, dicopy dari .env.example"
+    else
+      warn "❗ Tidak ada .env atau .env.example di $ROOT"
+    fi
   fi
-  [[ -n "$PHP" ]] && { $PHP artisan config:clear >/dev/null 2>&1 || true; $PHP artisan cache:clear >/dev/null 2>&1 || true; $PHP artisan route:clear >/dev/null 2>&1 || true; $PHP artisan view:clear >/dev/null 2>&1 || true; }
-  chown -R www-data:www-data "$ROOT" >/dev/null 2>&1 || true
-  chmod -R 755 "$ROOT/storage" "$ROOT/bootstrap/cache" >/dev/null 2>&1 || true
-  systemctl restart nginx >/dev/null 2>&1 || true
+
+  # cek APP_KEY
+  if [[ -f "$ROOT/.env" ]]; then
+    if ! grep -q '^APP_KEY=base64:' "$ROOT/.env"; then
+      if [[ -n "$PHP" ]]; then
+        log "🔑 APP_KEY belum ada — generate dengan artisan"
+        $PHP artisan key:generate --force || warn "❗ artisan key:generate gagal"
+      else
+        warn "❗ PHP binary tidak ditemukan, APP_KEY tidak bisa digenerate"
+      fi
+    fi
+  fi
+
+  [[ -n "$PHP" ]] && {
+    $PHP artisan config:clear || true
+    $PHP artisan cache:clear || true
+    $PHP artisan route:clear || true
+    $PHP artisan view:clear || true
+  }
+
+  chown -R www-data:www-data "$ROOT" || true
+  chmod -R 755 "$ROOT/storage" "$ROOT/bootstrap/cache" || true
+  systemctl restart nginx || true
   local php_fpm="$(systemctl list-units --type=service --all | grep -oE 'php[0-9]+(\.[0-9]+)?-fpm' | head -n1 || true)"
-  [[ -n "$php_fpm" ]] && systemctl restart "$php_fpm" || true
-  ok "♻️ Laravel cache cleared & services restarted"
+  [[ -n "$php_fpm" ]] && systemctl restart "$php_fpm"
+
+  ok "♻️ Laravel fixed (APP_KEY + cache cleared + services restarted)"
 }
 
 # ================== INSTALL/UNINSTALL ==================
