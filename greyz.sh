@@ -1,5 +1,7 @@
 #!/bin/bash
-# GreySync Protector System v1.5
+# GreySync Protector + Anti-Intip  v2.0 (Final Fix)
+# tested with Pterodactyl >= v1.11
+# ------------------------------------------------------
 
 RED="\033[1;31m"
 GREEN="\033[1;32m"
@@ -9,30 +11,29 @@ BLUE="\033[1;34m"
 RESET="\033[0m"
 BOLD="\033[1m"
 
-VERSION="1.5"
+VERSION="2.0"
 BACKUP_DIR="backup_greysync_protect"
 
-# === Target controller untuk halaman admin ===
+# === Controller yang diproteksi (ubah sesuai struktur panelmu)
 declare -A CONTROLLERS=(
   ["NodeController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Nodes/NodeController.php"
   ["NestController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Nests/NestController.php"
-  ["IndexController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Settings/IndexController.php"
+  ["SettingsController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/SettingsController.php"
 )
 
-# === Target controller untuk Anti-Intip halaman server ===
-SERVER_CONTROLLER="/var/www/pterodactyl/app/Http/Controllers/Server/ServerController.php"
+# === Controller untuk halaman Server (ubah sesuai hasil find)
+SERVER_CONTROLLER="/var/www/pterodactyl/app/Http/Controllers/Admin/Servers/ServerController.php"
 
 clear
 echo -e "${CYAN}${BOLD}"
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║          GreySync Protector + Anti-Intip             ║"
-echo "║                 Version $VERSION                      ║"
+echo "║      GreySync Protector + Anti-Intip  v${VERSION}        ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
 
 echo -e "${YELLOW}Pilih mode:${RESET}"
-echo -e "1) 🔐 Install Protect + Anti-Intip"
-echo -e "2) ♻️  Restore Backup"
+echo "1) 🔐 Install Protect + Anti-Intip"
+echo "2) ♻️  Restore Backup"
 read -p "Masukkan pilihan (1/2): " MODE
 
 # ================== MODE 1 =========================
@@ -45,23 +46,17 @@ if [[ "$MODE" == "1" ]]; then
 
     mkdir -p "$BACKUP_DIR"
 
-    echo -e "${YELLOW}📦 Membackup file-file asli...${RESET}"
+    echo -e "${YELLOW}📦 Membackup file asli...${RESET}"
     for name in "${!CONTROLLERS[@]}"; do
         cp "${CONTROLLERS[$name]}" "$BACKUP_DIR/$name.bak"
     done
     cp "$SERVER_CONTROLLER" "$BACKUP_DIR/ServerController.php.bak"
 
-    echo -e "${GREEN}🔧 Menerapkan Protect untuk Admin ID: $ADMIN_ID${RESET}"
+    echo -e "${GREEN}🔧 Mem-patch untuk Admin ID: $ADMIN_ID${RESET}"
 
-    # === Patch halaman Nodes/Nests/Settings ===
+    # === Patch Admin controller ===
     for name in "${!CONTROLLERS[@]}"; do
         path="${CONTROLLERS[$name]}"
-
-        if ! grep -q "public function index" "$path"; then
-            echo -e "${RED}⚠️  Lewat: $name tidak memiliki 'public function index()'.${RESET}"
-            continue
-        fi
-
         awk -v admin_id="$ADMIN_ID" '
         BEGIN { inserted_use=0; in_func=0; }
         /^namespace / {
@@ -72,24 +67,19 @@ if [[ "$MODE" == "1" ]]; then
             }
             next;
         }
-        /public function index\(.*\)/ {
-            print; in_func=1; next;
-        }
+        /public function index\(.*\)/ { print; in_func=1; next }
         in_func==1 && /^\s*{/ {
             print;
             print "        $user = Auth::user();";
-            print "        if (!$user || $user->id != " admin_id ") {";
-            print "            abort(403, \\\"Akses ditolak! Hanya Admin ID " admin_id " yang dapat mengakses halaman ini. ©GreySync v'"$VERSION"'\\\");";
-            print "        }";
+            print "        if (!$user || ($user->id != " admin_id " && !$user->root_admin)) abort(403);";
             in_func=0; next;
         }
-        { print; }
-        ' "$path" > "$path.patched" && mv "$path.patched" "$path"
-
+        { print }
+        ' "$path" > "$path.tmp" && mv "$path.tmp" "$path"
         echo -e "${GREEN}✅ Protect diterapkan ke: $name${RESET}"
     done
 
-    # === Patch Anti-Intip di halaman Server ===
+    # === Patch ServerController (anti-intip) ===
     awk -v admin_id="$ADMIN_ID" '
     BEGIN { inserted_use=0; in_func=0; }
     /^namespace / {
@@ -100,63 +90,47 @@ if [[ "$MODE" == "1" ]]; then
         }
         next;
     }
-    /public function show\(.*Server.*\)/ {
-        print; in_func=1; next;
-    }
+    /public function show\(.*\)/ { print; in_func=1; next }
     in_func==1 && /^\s*{/ {
         print;
         print "        $user = Auth::user();";
-        print "        if (!$user || ($user->id !== $server->owner_id && $user->id != " admin_id ")) {";
-        print "            abort(403, \\\"❌ Kenalin Syah Anti-Intip v"'"$VERSION"'"\\\");";
-        print "        }";
+        print "        if (!$user || ($user->id !== $server->owner_id && $user->id != " admin_id ")) abort(403);";
         in_func=0; next;
     }
-    { print; }
+    { print }
     ' "$BACKUP_DIR/ServerController.php.bak" > "$SERVER_CONTROLLER"
-
     echo -e "${GREEN}✅ Anti-Intip diterapkan ke ServerController${RESET}"
 
-
-    echo -e "${YELLOW}➤ Build ulang panel...${RESET}"
-    cd /var/www/pterodactyl || { echo -e "${RED}❌ Gagal ke direktori panel.${RESET}"; exit 1; }
+    echo -e "${YELLOW}🚀 Clear cache & rebuild panel...${RESET}"
+    cd /var/www/pterodactyl || exit 1
+    php artisan route:clear
+    php artisan view:clear
+    php artisan config:clear
     yarn build:production --progress
 
-    echo -e "\n${BLUE}🎉 Install selesai!"
-    echo -e "📁 Backup ada di: $BACKUP_DIR${RESET}"
-
+    echo -e "\n${BLUE}🎉 Install selesai. Backup ada di: $BACKUP_DIR${RESET}"
 
 # ================= MODE 2 =======================
 elif [[ "$MODE" == "2" ]]; then
     if [[ ! -d "$BACKUP_DIR" ]]; then
-        echo -e "${RED}❌ Folder backup tidak ditemukan: $BACKUP_DIR${RESET}"
+        echo -e "${RED}❌ Backup tidak ditemukan${RESET}"
         exit 1
     fi
 
-    echo -e "${CYAN}♻️  Memulihkan file-file asli...${RESET}"
+    echo -e "${CYAN}♻️  Memulihkan file...${RESET}"
     for name in "${!CONTROLLERS[@]}"; do
-        if [[ -f "$BACKUP_DIR/$name.bak" ]]; then
-            cp "$BACKUP_DIR/$name.bak" "${CONTROLLERS[$name]}"
-            echo -e "${GREEN}🔄 Dipulihkan: $name${RESET}"
-        else
-            echo -e "${RED}⚠️  Backup tidak ditemukan untuk $name.${RESET}"
-        fi
+        [[ -f "$BACKUP_DIR/$name.bak" ]] && cp "$BACKUP_DIR/$name.bak" "${CONTROLLERS[$name]}"
     done
+    [[ -f "$BACKUP_DIR/ServerController.php.bak" ]] && cp "$BACKUP_DIR/ServerController.php.bak" "$SERVER_CONTROLLER"
 
-    if [[ -f "$BACKUP_DIR/ServerController.php.bak" ]]; then
-        cp "$BACKUP_DIR/ServerController.php.bak" "$SERVER_CONTROLLER"
-        echo -e "${GREEN}🔄 Dipulihkan: ServerController${RESET}"
-    else
-        echo -e "${RED}⚠️  Backup tidak ditemukan untuk ServerController.${RESET}"
-    fi
-
-    cd /var/www/pterodactyl || { echo -e "${RED}❌ Gagal ke direktori panel.${RESET}"; exit 1; }
+    cd /var/www/pterodactyl || exit 1
+    php artisan route:clear
+    php artisan view:clear
+    php artisan config:clear
     yarn build:production --progress
 
-    echo -e "\n${BLUE}✅ Restore selesai. Semua file kembali ke versi asli.${RESET}"
+    echo -e "\n${BLUE}✅ Restore selesai${RESET}"
 
-
-# ==================== MODE INVALID ==================
 else
-    echo -e "${RED}❌ Pilihan tidak valid. Masukkan 1 atau 2.${RESET}"
-    exit 1
+    echo -e "${RED}❌ Pilihan tidak valid${RESET}"
 fi
