@@ -303,7 +303,10 @@ run_yarn_build() {
         ok "Frontend build finished"
       fi
     elif [[ -f node_modules/.bin/webpack ]]; then
-      if ! NODE_OPTIONS="${NODE_OPTIONS:-}" yarn run clean >/dev/null 2>&1 || true
+      if ! NODE_OPTIONS="${NODE_OPTIONS:-}" yarn run clean >/dev/null 2>&1; then
+        log "Clean step failed, continuing anyway..."
+      fi
+
       if ! NODE_OPTIONS="${NODE_OPTIONS:-}" ./node_modules/.bin/webpack --mode production --silent --progress; then
         err "webpack build failed (check logs). Continuing but panel front may be broken."
       else
@@ -312,6 +315,7 @@ run_yarn_build() {
     else
       log "No build script or webpack found, skipping frontend build."
     fi
+
     popd >/dev/null 2>&1
   else
     log "Skipping yarn build (no package.json or build disabled)."
