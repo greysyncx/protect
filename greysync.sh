@@ -103,18 +103,22 @@ restore_from_latest_backup() {
 ensure_auth_use() {
   local file="$1"
   [[ -f "$file" ]] || return 0
-  if ! grep -q "Illuminate\\\\Support\\\\Facades\\\\Auth" "$file"; then
+  if ! grep -q "use Illuminate\\\\Support\\\\Facades\\\\Auth;" "$file"; then
     awk '
-    BEGIN{ins=0}
-    /namespace[[:space:]]+[A-Za-z0-9_\\\]+;/ && ins==0 {
-      print $0
-      print "use Illuminate\\Support\\Facades\\Auth;"
-      ins=1
-      next
-    }
-    { print }
+      BEGIN {ins=0}
+      # setelah baris namespace, kita sisipkan baris use
+      /^namespace[[:space:]]+[A-Za-z0-9_\\]+;/ && ins==0 {
+        print $0
+        print "use Illuminate\\Support\\Facades\\Auth;"
+        ins=1
+        next
+      }
+      {print}
     ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
-    log "Inserted Auth use into $file"
+
+    echo "[OK] Inserted Auth use into $file"
+  else
+    echo "[OK] $file sudah ada use Auth"
   fi
 }
 
