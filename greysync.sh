@@ -103,22 +103,32 @@ restore_from_latest_backup() {
 ensure_auth_use() {
   local file="$1"
   [[ -f "$file" ]] || return 0
-  if ! grep -q "use Illuminate\\\\Support\\\\Facades\\\\Auth;" "$file"; then
-    awk '
-      BEGIN {ins=0}
-      # setelah baris namespace, kita sisipkan baris use
-      /^namespace[[:space:]]+[A-Za-z0-9_\\]+;/ && ins==0 {
-        print $0
-        print "use Illuminate\\Support\\Facades\\Auth;"
-        ins=1
-        next
-      }
-      {print}
-    ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
-
-    echo "[OK] Inserted Auth use into $file"
+  sed -i -r '/use[[:space:]]+Illuminate([^;]*Support[^;]*Facades[^;]*Auth|Support\\\Facades\\\Auth)[^;]*;?/Id' "$file" || true
+  sed -i -r '/use[[:space:]]+IlluminateSupportFacadesAuth;?/Id' "$file" || true
+  if grep -q '<?php' "$file"; then
+    awk 'BEGIN{seen=0}
+      {
+        if(seen==0){
+          if(match($0,/<\?php/)){
+            printf "%s\n", substr($0, RSTART, RLENGTH)
+            rest = substr($0, RSTART+RLENGTH)
+            if(length(rest)>0) print rest
+            seen=1
+          }
+        } else {
+          print
+        }
+      }' "$file" > "$file.tmp" && mv "$file.tmp" "$file" || true
   else
-    echo "[OK] $file sudah ada use Auth"
+    sed -i '1s/^/<?php\n/' "$file" || true
+  fi
+  if ! grep -q "^use Illuminate\\\\Support\\\\Facades\\\\Auth;" "$file"; then
+    if grep -q '^namespace Pterodactyl\\Http\\Controllers\\Admin;' "$file"; then
+      sed -i '/^namespace Pterodactyl\\Http\\Controllers\\Admin;/a use Illuminate\\Support\\Facades\\Auth;' "$file" || true
+    else
+      sed -i '0,/^namespace[[:space:]]\+[A-Za-z0-9_\\]\+;/ {/^namespace[[:space:]]\+[A-Za-z0-9_\\]\+;/a use Illuminate\\Support\\Facades\\Auth;}' "$file" || true
+    fi
+    log "Inserted Auth use into $file"
   fi
 }
 
@@ -127,11 +137,22 @@ insert_guard_into_first_method() {
   [[ -f "$file" ]] || { log "Skip (not found): $file"; return 0; }
   if grep -q "GREYSYNC_PROTECT_${tag}" "$file" 2>/dev/null; then log "Already patched ($tag): $file"; return 0; fi
   backup_file "$file"
+
   awk -v admin="$admin_id" -v tag="$tag" -v methods_csv="$methods_csv" '
-  BEGIN{ split(methods_csv, mlist, " "); in_sig=0; patched=0 }
+  BEGIN{
+    n = split(methods_csv, mlist, " ");
+    in_sig=0; patched=0;
+    # build regex group: (index|view|show)
+    group="("
+    for(i=1;i<=n;i++){
+      group = group mlist[i] (i<n ? "|" : "")
+    }
+    group = group ")"
+  }
   {
     line=$0
     if (patched==0) {
+      # if previous line was a method signature without brace, wait for the opening brace
       if (in_sig==1 && match(line,/^\s*{/)) {
         print line
         print "        // GREYSYNC_PROTECT_"tag
@@ -139,27 +160,28 @@ insert_guard_into_first_method() {
         print "        if (!$user || $user->id != " admin ") { abort(403, \"❌ GreySync Protect: Akses ditolak\"); }"
         in_sig=0; patched=1; next
       }
-      for (i in mlist) {
-        pat = "public[[:space:]]+function[[:space:]]+"mlist[i]"[[:space:]]*\\([^)]*\\)[[:space:]]*\\{?"
-        if (match(line,pat)) {
-          if (index(line,"{")>0) {
-            before = substr(line,1,index(line,"{"))
-            rem = substr(line,index(line,"{")+1)
-            print before
-            print "        // GREYSYNC_PROTECT_"tag
-            print "        $user = Auth::user();"
-            print "        if (!$user || $user->id != " admin ") { abort(403, \"❌ GreySync Protect: Akses ditolak\"); }"
-            if (length(rem)>0) print rem
-            patched=1; in_sig=0; next
-          } else {
-            print line; in_sig=1; next
-          }
+      # attempt to match public function <method> (...) {  or without {
+      pat = "public[[:space:]]+function[[:space:]]+" group "[[:space:]]*\\([^)]*\\)[[:space:]]*\\{?"
+      if (match(line, pat)) {
+        # if brace is on same line
+        if (index(line,"{")>0) {
+          before = substr(line,1,index(line,"{"))
+          rem = substr(line,index(line,"{")+1)
+          print before
+          print "        // GREYSYNC_PROTECT_"tag
+          print "        $user = Auth::user();"
+          print "        if (!$user || $user->id != " admin ") { abort(403, \"❌ GreySync Protect: Akses ditolak\"); }"
+          if (length(rem)>0) print rem
+          patched=1; in_sig=0; next
+        } else {
+          print line; in_sig=1; next
         }
       }
     }
     print line
   }
   ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+
   if ! php_check_file "$file"; then
     err "Syntax error detected after patching $file"
     cp -af "$BACKUP_DIR/${file#$ROOT/}.bak" "$file" 2>/dev/null || true
@@ -175,11 +197,17 @@ patch_user_delete() {
   [[ -f "$file" ]] || { log "Skip (UserController not found)"; return 0; }
   if grep -q "GREYSYNC_PROTECT_USER" "$file" 2>/dev/null; then log "Already patched: UserController"; return 0; fi
   backup_file "$file"
+
+  if ! grep -Ei "public[[:space:]]+function[[:space:]]+(delete|destroy)" "$file"; then
+    err "Pattern 'delete/destroy' tidak ditemukan di UserController. Skipping patch."
+    return 0
+  fi
+
   awk -v admin="$admin_id" '
   BEGIN{in_sig=0; patched=0}
   {
     line=$0
-    if (patched==0 && match(line,/public[[:space:]]+function[[:space:]]+delete[[:space:]]*\([^\)]*\)[[:space:]]*\{?/i)) {
+    if (patched==0 && match(line,/public[[:space:]]+function[[:space:]]+(delete|destroy)[[:space:]]*\([^\)]*\)[[:space:]]*\{?/i)) {
       if (index(line,"{")>0) {
         before = substr(line,1,index(line,"{"))
         print before
@@ -200,6 +228,7 @@ patch_user_delete() {
     print line
   }
   ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+
   if ! php_check_file "$file"; then
     err "UserController syntax error after patch, restoring backup"
     cp -af "$BACKUP_DIR/${file#$ROOT/}.bak" "$file" 2>/dev/null || true
