@@ -296,7 +296,7 @@ run_yarn_build() {
     pushd "$ROOT" >/dev/null 2>&1
     yarn add --silent cross-env >/dev/null 2>&1 || true
 
-    if yarn run | grep -q "build:production"; then
+    if yarn run || true | grep -q "build:production"; then
       if ! NODE_OPTIONS="${NODE_OPTIONS:-}" yarn build:production --silent --progress; then
         err "yarn build failed (check logs). Continuing but panel front may be broken."
       else
