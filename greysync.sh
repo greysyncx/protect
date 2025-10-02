@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GreySync Protect v1.6.3
+# GreySync Protect v1.6.8 (Final Fix)
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -7,17 +7,18 @@ IFS=$'\n\t'
 ROOT="${ROOT:-/var/www/pterodactyl}"
 BACKUP_PARENT="${BACKUP_PARENT:-$ROOT/greysync_backups}"
 TIMESTAMP="$(date +%s)"
-BACKUP_DIR="${BACKUP_DIR:-$BACKUP_PARENT/greysync_$TIMESTAMP}"
+BACKUP_DIR="$BACKUP_PARENT/greysync_$TIMESTAMP"
 BACKUP_LATEST_LINK="$BACKUP_PARENT/latest"
-STORAGE="${STORAGE:-$ROOT/storage/app/greysync_protect.json}"
-IDPROTECT="${IDPROTECT:-$ROOT/storage/app/idprotect.json}"
+STORAGE="$ROOT/storage/app/greysync_protect.json"
+IDPROTECT="$ROOT/storage/app/idprotect.json"
 ADMIN_ID_DEFAULT="${ADMIN_ID_DEFAULT:-1}"
 LOGFILE="${LOGFILE:-/var/log/greysync_protect.log}"
 
-YARN_BUILD=false
-VERSION="1.6.3"
+VERSION="1.6.8"
 IN_INSTALL=false
 EXIT_CODE=0
+
+mkdir -p "$BACKUP_PARENT" "$(dirname "$STORAGE")" "$(dirname "$IDPROTECT")" "$(dirname "$LOGFILE")" 2>/dev/null || true
 
 declare -A TARGETS=(
   ["USER"]="$ROOT/app/Http/Controllers/Admin/UserController.php"
@@ -34,203 +35,66 @@ RED="\033[1;31m"; GREEN="\033[1;32m"; CYAN="\033[1;36m"; RESET="\033[0m"
 
 log(){ echo -e "$(date -u +'%Y-%m-%dT%H:%M:%SZ') - $*" | tee -a "$LOGFILE"; }
 err(){ echo -e "${RED}$*${RESET}" | tee -a "$LOGFILE" >&2; EXIT_CODE=1; }
-ok(){  echo -e "${GREEN}$*${RESET}" | tee -a "$LOGFILE"; }
+ok(){ echo -e "${GREEN}$*${RESET}" | tee -a "$LOGFILE"; }
 
-php_bin(){ command -v php >/dev/null 2>&1 && echo "php" || for v in 8.3 8.2 8.1 8.0 7.4; do command -v php$v >/dev/null 2>&1 && echo "php$v" && return; done; }
-PHP="$(php_bin || true)"
-
-php_check_file(){ [[ -n "$PHP" && -f "$1" ]] && "$PHP" -l "$1" >/dev/null 2>&1; }
-
-ensure_backup_parent(){ mkdir -p "$BACKUP_PARENT"; }
-backup_file(){ [[ -f "$1" ]] && mkdir -p "$BACKUP_DIR/$(dirname "${1#$ROOT/}")" && cp -af "$1" "$BACKUP_DIR/${1#$ROOT/}.bak" && log "Backup: $1"; }
-save_latest_symlink(){ mkdir -p "$BACKUP_PARENT" && ln -sfn "$(basename "$BACKUP_DIR")" "$BACKUP_LATEST_LINK"; }
-
-restore_from_dir(){
-  [[ -d "$1" ]] || { err "Backup dir not found: $1"; return 1; }
-  log "Restoring from $1"
-  find "$1" -type f -name "*.bak" | while read -r f; do
-    rel="${f#$1/}"; target="$ROOT/${rel%.bak}"
-    mkdir -p "$(dirname "$target")"; cp -af "$f" "$target"
-    log "Restored: $target"
+php_bin() {
+  if command -v php >/dev/null 2>&1; then echo "php"; return; fi
+  for v in 8.3 8.2 8.1 8.0 7.4; do
+    if command -v "php$v" >/dev/null 2>&1; then echo "php$v"; return; fi
   done
 }
+PHP="$(php_bin || true)"
 
-restore_from_latest_backup(){
-  local latest
-  if [[ -L "$BACKUP_LATEST_LINK" ]]; then latest="$(readlink -f "$BACKUP_LATEST_LINK")"
-  else latest="$(ls -td "$BACKUP_PARENT"/greysync_* 2>/dev/null | head -n1 || true)"
-  fi
-  [[ -z "$latest" || ! -d "$latest" ]] && { err "No backups found"; return 1; }
-  restore_from_dir "$latest"
-}
+php_check_file(){ [[ -n "$PHP" && -f "$1" ]] || return 1; "$PHP" -l "$1" >/dev/null 2>&1; }
 
-ensure_auth_use(){
-  [[ -f "$1" ]] || return
-  grep -q "Illuminate\\\\Support\\\\Facades\\\\Auth" "$1" || \
-  awk '/namespace/{print;print "use Illuminate\\Support\\Facades\\Auth;";next}1' "$1" > "$1.tmp" && mv "$1.tmp" "$1" && log "Inserted Auth use into $1"
-}
+backup_file(){ local f="$1"; [[ -f "$f" ]] && { mkdir -p "$BACKUP_DIR/$(dirname "${f#$ROOT/}")"; cp -af "$f" "$BACKUP_DIR/${f#$ROOT/}.bak"; log "Backup: $f"; }; }
+restore_from_dir(){ [[ -d "$1" ]] || { err "Backup dir not found: $1"; return 1; }; find "$1" -type f -name "*.bak" -print0 | while IFS= read -r -d '' f; do rel="${f#$1/}"; target="$ROOT/${rel%.bak}"; mkdir -p "$(dirname "$target")"; cp -af "$f" "$target"; log "Restored: $target"; done; }
+restore_from_latest_backup(){ local latest="$(readlink -f "$BACKUP_LATEST_LINK" 2>/dev/null || ls -td "$BACKUP_PARENT"/greysync_* 2>/dev/null | head -n1 || true)"; [[ -z "$latest" ]] && { err "No backups"; return 1; }; restore_from_dir "$latest"; }
 
-insert_guard(){
-  local file="$1" tag="$2" admin="$3"
-  [[ -f "$file" ]] || { log "Skip (not found): $file"; return; }
-  grep -q "GREYSYNC_PROTECT_${tag}" "$file" && { log "Already patched $tag"; return; }
-  backup_file "$file"
-  awk -v admin="$admin" -v tag="$tag" '
-  BEGIN{patched=0}
-  /public[[:space:]]+function/ && patched==0{
-    print $0
-    print "        // GREYSYNC_PROTECT_"tag
-    print "        $user = Auth::user();"
-    print "        if (!$user || $user->id != "admin") { abort(403, \"❌ GreySync Protect: Akses ditolak\"); }"
-    patched=1; next
-  }
-  {print}
-  ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
-  php_check_file "$file" || { err "Syntax error $file"; return 1; }
-  ok "Patched: $file"
-}
+ensure_auth_use(){ local f="$1"; [[ -f "$f" ]] || return; grep -Fq "Illuminate\\Support\\Facades\\Auth" "$f" || sed -i "$(grep -n '^namespace ' "$f" | head -n1 | cut -d: -f1)a use Illuminate\\Support\\Facades\\Auth;" "$f"; }
 
-patch_file_manager(){
-  local file="${TARGETS[FILE]}" admin="$1"
-  [[ -f "$file" ]] || { log "Skip FileController"; return; }
-  grep -q "GREYSYNC_PROTECT_FILE" "$file" && { log "Already patched FileController"; return; }
-  backup_file "$file"; ensure_auth_use "$file"
-  awk -v admin="$admin" '
-  BEGIN{patched=0}
-  /public[[:space:]]+function[[:space:]]+(index|download|contents|store|rename|delete)/ && patched==0{
-    print $0
-    print "        // GREYSYNC_PROTECT_FILE"
-    print "        $user = Auth::user();"
-    print "        $server = (isset($request)?$request->attributes->get(\"server\"):null);"
-    print "        if (!$user) { abort(403, \"❌ GreySync Protect: akses ditolak\"); }"
-    print "        if ($user->id != "admin" && (!$server || $server->owner_id != $user->id)) {"
-    print "            $placeholder = storage_path(\"app/greysync_protect_placeholder.png\");"
-    print "            if (file_exists($placeholder)) { return response()->file($placeholder); }"
-    print "            abort(403, \"❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu\");"
-    print "        }"
-    patched=1; next
-  }
-  {print}
-  ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
-  php_check_file "$file" || { err "FileController syntax error"; return 1; }
-  ok "Patched: FileController"
-}
+insert_guard_after_open_brace_multiline(){ local f="$1"; local func="$2"; local guard="$3"; local marker="$4"; grep -Fq "$marker" "$f" && { log "Skip ($marker)"; return; }; perl -0777 -pe "s/($func)/\$1\n$guard/si" "$f" > "$f.tmp" && mv "$f.tmp" "$f"; }
 
-patch_user_delete(){
-  local file="${TARGETS[USER]}" admin="$1"
-  [[ -f "$file" ]] || { log "Skip UserController"; return; }
-  grep -q "GREYSYNC_PROTECT_USER" "$file" && { log "Already patched UserController"; return; }
-  backup_file "$file"
-  awk -v admin="$admin" '
-  BEGIN{patched=0}
-  /public[[:space:]]+function[[:space:]]+delete/ && patched==0{
-    print $0
-    print "        // GREYSYNC_PROTECT_USER"
-    print "        if (isset($request) && $request->user()->id != "admin") { throw new Pterodactyl\\Exceptions\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus user\"); }"
-    patched=1; next
-  }
-  {print}
-  ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
-  php_check_file "$file" || { err "UserController syntax error"; return 1; }
-  ok "Patched: UserController"
-}
+patch_file_manager(){ local f="${TARGETS[FILE]}"; local aid="$1"; [[ -f "$f" ]] || return; grep -Fq "GREYSYNC_PROTECT_FILE_SAFE" "$f" && return; backup_file "$f"; ensure_auth_use "$f"; local guard="
+        // GREYSYNC_PROTECT_FILE_SAFE
+        \$user = Auth::user();
+        \$server = (isset(\$request) ? \$request->attributes->get('server') : null);
+        if (!\$user) { abort(403, '❌ GreySync Protect: akses ditolak'); }
+        if (\$user->id != $aid && empty(\$user->root_admin) && (!\$server || \$server->owner_id != \$user->id)) {
+            abort(403, '❌ GreySync Protect: Mau ngapain wok? ini server orang, bukan server mu');
+        }"; insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+(store|rename|delete|compress|decompress|replace|move|copy)\s*\([^)]*\)\s*\{' "$guard" "GREYSYNC_PROTECT_FILE_SAFE"; php_check_file "$f" || cp -af "$BACKUP_DIR/${f#$ROOT/}.bak" "$f"; ok "Patched FileController"; }
 
-patch_server_delete_service(){
-  local file="${TARGETS[SERVER]}" admin="$1"
-  [[ -f "$file" ]] || { log "Skip ServerDeletionService"; return; }
-  grep -q "GREYSYNC_PROTECT_SERVER" "$file" && { log "Already patched ServerDeletionService"; return; }
-  backup_file "$file"; ensure_auth_use "$file"
-  awk -v admin="$admin" '
-  BEGIN{patched=0}
-  /public[[:space:]]+function[[:space:]]+handle/ && patched==0{
-    print $0
-    print "        // GREYSYNC_PROTECT_SERVER"
-    print "        $user = Auth::user();"
-    print "        if ($user && $user->id != "admin") { throw new Pterodactyl\\Exceptions\\DisplayException(\"❌ GreySync Protect: Tidak boleh hapus server\"); }"
-    patched=1; next
-  }
-  {print}
-  ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
-  php_check_file "$file" || { err "ServerDeletionService syntax error"; return 1; }
-  ok "Patched: ServerDeletionService"
-}
+patch_user_delete(){ local f="${TARGETS[USER]}"; local aid="$1"; [[ -f "$f" ]] || return; grep -Fq "GREYSYNC_PROTECT_USER" "$f" && return; backup_file "$f"; ensure_auth_use "$f"; local g="
+        // GREYSYNC_PROTECT_USER
+        \$user = Auth::user();
+        if (!\$user || (\$user->id != $aid && empty(\$user->root_admin))) { throw new Pterodactyl\\Exceptions\\DisplayException('❌ GreySync Protect: Tidak boleh hapus user'); }"; insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+delete\s*\([^)]*\)\s*\{' "$g" "GREYSYNC_PROTECT_USER"; ok "Patched UserController"; }
 
-fix_laravel(){
-  cd "$ROOT" || return 1
-  command -v composer >/dev/null 2>&1 && composer dump-autoload -o --no-dev || true
-  [[ -n "$PHP" ]] && { $PHP artisan config:clear || true; $PHP artisan cache:clear || true; }
-  chown -R www-data:www-data "$ROOT" || true
-  chmod -R 755 "$ROOT/storage" "$ROOT/bootstrap/cache" || true
-  systemctl restart nginx || true
-  fpm=$(systemctl list-units --type=service --all | grep -oE 'php[0-9]+(\.[0-9]+)?-fpm' | head -n1 || true)
-  [[ -n "$fpm" ]] && systemctl restart "$fpm" || true
-  ok "Laravel caches cleared & services restarted"
-}
+patch_server_delete_service(){ local f="${TARGETS[SERVER]}"; local aid="$1"; [[ -f "$f" ]] || return; grep -Fq "GREYSYNC_PROTECT_SERVER" "$f" && return; backup_file "$f"; ensure_auth_use "$f"; local g="
+        // GREYSYNC_PROTECT_SERVER
+        \$user = Auth::user();
+        if (\$user && (\$user->id != $aid && empty(\$user->root_admin))) { throw new Pterodactyl\\Exceptions\\DisplayException('❌ GreySync Protect: Tidak boleh hapus server'); }"; insert_guard_after_open_brace_multiline "$f" 'public\s+function\s+handle\s*\([^)]*\)\s*\{' "$g" "GREYSYNC_PROTECT_SERVER"; ok "Patched ServerDeletionService"; }
 
-install_all(){
-  IN_INSTALL=true
-  ensure_backup_parent; mkdir -p "$BACKUP_DIR"; save_latest_symlink
-  local admin="${1:-$ADMIN_ID_DEFAULT}"
-  log "Installing GreySync Protect v$VERSION (admin_id=$admin)"
-  echo '{ "status":"on" }' > "$STORAGE"
-  echo '{ "superAdminId": '"$admin"' }' > "$IDPROTECT"
-  patch_user_delete "$admin"
-  patch_server_delete_service "$admin"
-  for tag in NODE NEST SETTINGS DATABASES LOCATIONS; do insert_guard "${TARGETS[$tag]}" "$tag" "$admin"; done
-  patch_file_manager "$admin"
-  fix_laravel || true
-  ok "✅ GreySync Protect installed. Backup in $BACKUP_DIR"
-  IN_INSTALL=false
-}
+insert_guard_into_first_method(){ local f="$1"; local tag="$2"; local aid="$3"; local m="$(echo "$4" | sed 's/ /|/g')"; [[ -f "$f" ]] || return; grep -Fq "GREYSYNC_PROTECT_${tag}" "$f" && return; backup_file "$f"; ensure_auth_use "$f"; local g="
+        // GREYSYNC_PROTECT_$tag
+        \$user = Auth::user();
+        if (!\$user || (\$user->id != $aid && empty(\$user->root_admin))) { abort(403, '❌ GreySync Protect: Akses ditolak'); }"; insert_guard_after_open_brace_multiline "$f" "public\s+function\s+($m)\s*\([^)]*\)\s*\{" "$g" "GREYSYNC_PROTECT_${tag}"; ok "Patched $tag"; }
 
-uninstall_all(){
-  log "Uninstalling GreySync Protect"
-  rm -f "$STORAGE" "$IDPROTECT"
-  restore_from_latest_backup || err "No backups to restore"
-  fix_laravel || true
-  ok "✅ Uninstalled & restored"
-}
+fix_laravel(){ cd "$ROOT"; [[ -n "$PHP" ]] && { $PHP artisan config:clear; $PHP artisan cache:clear; $PHP artisan route:clear; $PHP artisan view:clear; }; chown -R www-data:www-data "$ROOT" >/dev/null 2>&1 || true; chmod -R 755 "$ROOT/storage" "$ROOT/bootstrap/cache" >/dev/null 2>&1 || true; systemctl restart nginx >/dev/null 2>&1 || true; local php_fpm="$(systemctl list-units --type=service --all | grep -oE 'php[0-9]+(\.[0-9]+)?-fpm' | head -n1 || true)"; [[ -n "$php_fpm" ]] && systemctl restart "$php_fpm"; ok "Laravel cache cleared"; }
 
-admin_patch(){
-  local newid="${1:-}"
-  [[ -z "$newid" || ! "$newid" =~ ^[0-9]+$ ]] && { err "Usage: $0 adminpatch <id>"; return 1; }
-  echo '{ "superAdminId": '"$newid"' }' > "$IDPROTECT"
-  ok "SuperAdmin ID set -> $newid"
-  patch_user_delete "$newid"; patch_server_delete_service "$newid"
-  for tag in NODE NEST SETTINGS DATABASES LOCATIONS; do insert_guard "${TARGETS[$tag]}" "$tag" "$newid"; done
-  patch_file_manager "$newid"
-  fix_laravel || true
-}
+install_all(){ IN_INSTALL=true; mkdir -p "$BACKUP_DIR"; ln -sfn "$BACKUP_DIR" "$BACKUP_LATEST_LINK"; local aid="${1:-$ADMIN_ID_DEFAULT}"; log "Installing v$VERSION (SuperAdmin=$aid)"; echo '{ "status":"on" }' > "$STORAGE"; echo "{ \"superAdminId\": $aid }" > "$IDPROTECT"; patch_user_delete "$aid"; patch_server_delete_service "$aid"; for t in NODE NEST SETTINGS DATABASES LOCATIONS; do insert_guard_into_first_method "${TARGETS[$t]}" "$t" "$aid" "index view show edit update create"; done; patch_file_manager "$aid"; fix_laravel; ok "✅ GreySync Protect installed"; IN_INSTALL=false; }
 
-trap '_on_err' ERR
-_on_err(){ local rc=$?; [[ "$IN_INSTALL" = true ]] && { err "Error during install, rollback..."; restore_from_dir "$BACKUP_DIR" || true; fix_laravel || true; }; exit $rc; }
+uninstall_all(){ log "Uninstalling GreySync Protect"; rm -f "$STORAGE" "$IDPROTECT"; restore_from_latest_backup; fix_laravel; ok "✅ Uninstalled"; }
 
-print_menu(){
-  clear
-  echo -e "${CYAN}GreySync Protect v$VERSION${RESET}"
-  echo "1) Install Protect"
-  echo "2) Uninstall Protect"
-  echo "3) Restore Backup"
-  echo "4) Set SuperAdmin ID"
-  echo "5) Exit"
-  read -p "Pilih opsi [1-5]: " opt
-  case "$opt" in
-    1) read -p "Admin ID (default $ADMIN_ID_DEFAULT): " aid; install_all "${aid:-$ADMIN_ID_DEFAULT}" ;;
-    2) uninstall_all ;;
-    3) restore_from_latest_backup && fix_laravel ;;
-    4) read -p "SuperAdmin ID baru: " nid; admin_patch "$nid" ;;
-    5) exit 0 ;;
-    *) echo "Pilihan tidak valid"; exit 1 ;;
-  esac
-}
+admin_patch(){ local nid="$1"; [[ "$nid" =~ ^[0-9]+$ ]] || { err "SuperAdmin ID harus numerik"; return 1; }; echo "{ \"superAdminId\": $nid }" > "$IDPROTECT"; patch_user_delete "$nid"; patch_server_delete_service "$nid"; for t in NODE NEST SETTINGS DATABASES LOCATIONS; do insert_guard_into_first_method "${TARGETS[$t]}" "$t" "$nid" "index view show edit update create"; done; patch_file_manager "$nid"; fix_laravel; ok "SuperAdmin ID updated"; }
+
+trap '[[ "$IN_INSTALL" = true ]] && { err "Install failed, rollback"; restore_from_dir "$BACKUP_DIR"; fix_laravel; }; exit $?' ERR
+
+print_menu(){ clear; echo -e "${CYAN}GreySync Protect v$VERSION${RESET}"; echo "1) Install"; echo "2) Uninstall"; echo "3) Restore backup"; echo "4) Set SuperAdmin ID"; echo "5) Exit"; read -p "Pilih [1-5]: " o; case "$o" in 1) read -p "Admin ID (default $ADMIN_ID_DEFAULT): " aid; install_all "${aid:-$ADMIN_ID_DEFAULT}";; 2) uninstall_all;; 3) restore_from_latest_backup && fix_laravel;; 4) read -p "SuperAdmin ID baru: " nid; admin_patch "$nid";; 5) exit 0;; *) echo "Invalid";; esac; }
 
 case "${1:-}" in
-  "") print_menu ;;
-  install) install_all "${2:-$ADMIN_ID_DEFAULT}" ;;
-  uninstall) uninstall_all ;;
-  restore) restore_from_latest_backup ;;
-  adminpatch) admin_patch "$2" ;;
-  *) err "Usage: $0 {install|uninstall|restore|adminpatch <id>}"; exit 1 ;;
+  install) install_all "${2:-$ADMIN_ID_DEFAULT}";;
+  uninstall) uninstall_all;;
+  restore) restore_from_latest_backup;;
+  adminpatch) admin_patch "$2";;
+  *) print_menu;;
 esac
-
-exit $EXIT_CODE
