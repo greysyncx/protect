@@ -12,7 +12,7 @@ clear
 echo -e "${CYAN}${BOLD}"
 echo "╔══════════════════════════════════════════════════════╗"
 echo "║         GreySync Protect + Panel Builder             ║"
-echo "║                    Version $VERSION                  ║"
+echo "║                    Version $VERSION                      ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
 
