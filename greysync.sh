@@ -6,7 +6,7 @@ CYAN="\033[1;36m"
 YELLOW="\033[1;33m"
 RESET="\033[0m"
 BOLD="\033[1m"
-VERSION="1.3-stable"
+VERSION="1.3"
 
 clear
 echo -e "${CYAN}${BOLD}"
@@ -32,13 +32,13 @@ if [ "$OPSI" = "1" ]; then
     cp "$CONTROLLER_USER" "${CONTROLLER_USER}.bak"
 
     awk -v admin_id="$ADMIN_ID" '
-    /public function delete\(Request \$request, User \$user\): RedirectResponse/ {
+    /public function delete\(Request \$request, User $user\): RedirectResponse/ {
         print; in_func = 1; next;
     }
     in_func == 1 && /^\s*{/ {
         print;
         print "        if ($request->user()->id !== " admin_id ") {";
-        print "            throw new DisplayException(\"Lu Siapa Mau Delet User Lain Tolol?\\n©GreySync黙\");";
+        print "            throw new DisplayException(\"Lu Siapa Mau Delet User Lain Tolol?<br>©GreySync黙\");";
         print "        }";
         in_func = 0; next;
     }
@@ -61,9 +61,9 @@ if [ "$OPSI" = "1" ]; then
     }
     in_func == 1 && /^\s*{/ {
         print;
-        print "        \$user = Auth::user();";
-        print "        if (\$user && \$user->id !== " admin_id ") {";
-        print "            throw new DisplayException(\"Lu Siapa Mau Delet Server Lain Tolol?\\n©GreySync黙\");";
+        print "        $user = Auth::user();";
+        print "        if ($user && $user->id !== " admin_id ") {";
+        print "            throw new DisplayException(\"Lu Siapa Mau Delet Server Lain Tolol?<br>©GreySync黙\");";
         print "        }";
         in_func = 0; next;
     }
