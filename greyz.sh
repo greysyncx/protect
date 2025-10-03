@@ -1,6 +1,4 @@
 #!/bin/bash
-# GreySync Protector + Anti-Intip v2.1 (Final Fix)
-# Tested with Pterodactyl >= v1.11
 
 RED="\033[1;31m"
 GREEN="\033[1;32m"
@@ -8,113 +6,127 @@ CYAN="\033[1;36m"
 YELLOW="\033[1;33m"
 BLUE="\033[1;34m"
 RESET="\033[0m"
-BOLD="\033[1m"
-
-VERSION="2.1"
-BACKUP_DIR="backup_greysync_protect"
-
-declare -A CONTROLLERS=(
-  ["NodeController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Nodes/NodeController.php"
-  ["NestController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Nests/NestController.php"
-  ["IndexController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Settings/IndexController.php"
-  ["LocationController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Locations/LocationController.php"
-)
-
-SERVER_CONTROLLER="/var/www/pterodactyl/app/Http/Controllers/Admin/Servers/ServerController.php"
+VERSION="1.4"
 
 clear
 echo -e "${CYAN}${BOLD}"
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║       GreySync Protector + Anti-Intip v$VERSION       ║"
+echo "║          Protect + Panel Builder                     ║"
+echo "║                    Version $VERSION                  ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
 
-echo -e "${YELLOW}Pilih mode:${RESET}"
-echo "1) 🔐 Install Protect + Anti-Intip"
-echo "2) ♻ Restore Backup"
+echo -e "${YELLOW}Pilih mode yang ingin dijalankan:${RESET}"
+echo -e "1) 🔐 Install Protect (Add Protect)"
+echo -e "2) ♻️ Restore Backup (Restore)"
 read -p "Masukkan pilihan (1/2): " MODE
+
+declare -A CONTROLLERS
+CONTROLLERS["NodeController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Nodes/NodeController.php"
+CONTROLLERS["NestController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Nests/NestController.php"
+CONTROLLERS["IndexController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Settings/IndexController.php"
+CONTROLLERS["LocationController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Locations/LocationController.php"
+
+BACKUP_DIR="backup_greysync_protect"
 
 if [[ "$MODE" == "1" ]]; then
     read -p "👤 Masukkan ID Admin Utama (contoh: 1): " ADMIN_ID
-    [ -z "$ADMIN_ID" ] && echo -e "${RED}❌ Admin ID tidak boleh kosong.${RESET}" && exit 1
+    if [[ -z "$ADMIN_ID" ]]; then
+        echo -e "${RED}❌ Admin ID tidak boleh kosong.${RESET}"
+        exit 1
+    fi
 
     mkdir -p "$BACKUP_DIR"
-    echo -e "${YELLOW}📦 Membackup file asli...${RESET}"
+
+    echo -e "${YELLOW}📦 Membackup file asli sebelum di protect ke: ${BLUE}$BACKUP_DIR${RESET}"
     for name in "${!CONTROLLERS[@]}"; do
         cp "${CONTROLLERS[$name]}" "$BACKUP_DIR/$name.bak"
     done
-    cp "$SERVER_CONTROLLER" "$BACKUP_DIR/ServerController.php.bak"
 
-    echo -e "${GREEN}🔧 Menerapkan Protect ke Controllers...${RESET}"
+    echo -e "${GREEN}🔧 Menerapkan Protect hanya untuk ID $ADMIN_ID...${RESET}"
+
     for name in "${!CONTROLLERS[@]}"; do
         path="${CONTROLLERS[$name]}"
+        if ! grep -q "public function index" "$path"; then
+            echo -e "${RED}⚠️ Gagal: $name tidak memiliki 'public function index()'! Lewat.${RESET}"
+            continue
+        fi
+
         awk -v admin_id="$ADMIN_ID" '
         BEGIN { inserted_use=0; in_func=0; }
         /^namespace / {
             print;
             if (!inserted_use) {
                 print "use Illuminate\\Support\\Facades\\Auth;";
-                inserted_use=1;
+                inserted_use = 1;
             }
             next;
         }
-        /public function index\(.*\)/ { print; in_func=1; next }
-        in_func==1 && /^\s*{/ {
+        /public function index\(.*\)/ {
+            print; in_func = 1; next;
+        }
+        in_func == 1 && /^\s*{/ {
             print;
             print "        $user = Auth::user();";
-            print "        if (!$user || ($user->id != " admin_id " && !$user->root_admin)) abort(403);";
-            in_func=0; next;
+            print "        if (!$user || $user->id !== " admin_id ") {";
+            print "            abort(403, \"bocah tolol ngapain lu?\");";
+            print "        }";
+            in_func = 0; next;
         }
-        { print }
-        ' "$path" > "$path.tmp" && mv "$path.tmp" "$path"
+        { print; }
+        ' "$path" > "$path.patched" && mv "$path.patched" "$path"
         echo -e "${GREEN}✅ Protect diterapkan ke: $name${RESET}"
     done
 
-    echo -e "${GREEN}🔧 Menerapkan Anti-Intip ke ServerController...${RESET}"
-    awk -v admin_id="$ADMIN_ID" '
-    BEGIN { inserted_use=0; in_func=0; }
-    /^namespace / {
-        print;
-        if (!inserted_use) {
-            print "use Illuminate\\Support\\Facades\\Auth;";
-            inserted_use=1;
-        }
-        next;
-    }
-    /public function show\(.*\)/ { print; in_func=1; next }
-    in_func==1 && /^\s*{/ {
-        print;
-        print "        $user = Auth::user();";
-        print "        if (!$user || ($user->id !== $server->owner_id && $user->id != " admin_id ")) abort(403);";
-        in_func=0; next;
-    }
-    { print }
-    ' "$BACKUP_DIR/ServerController.php.bak" > "$SERVER_CONTROLLER"
-    echo -e "${GREEN}✅ Anti-Intip diterapkan ke ServerController${RESET}"
+    echo -e "${YELLOW}➤ Install Node.js 16 dan build frontend panel...${RESET}"
+    sudo apt-get update -y >/dev/null
+    sudo apt-get remove nodejs -y >/dev/null
+    curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash - >/dev/null
+    sudo apt-get install nodejs -y >/dev/null
 
-    echo -e "${YELLOW}🚀 Clear cache & rebuild panel...${RESET}"
-    cd /var/www/pterodactyl || exit 1
-    php artisan route:clear
-    php artisan view:clear
-    php artisan config:clear
+    cd /var/www/pterodactyl || { echo -e "${RED}❌ Gagal ke direktori panel.${RESET}"; exit 1; }
+
+    npm i -g yarn >/dev/null
+    yarn add cross-env >/dev/null
     yarn build:production --progress
 
-    echo -e "\n${BLUE}🎉 Install selesai. Backup ada di: $BACKUP_DIR${RESET}"
+    echo -e "\n${BLUE}🎉 Protect selesai!"
+    echo -e "📁 Backup file tersimpan di: $BACKUP_DIR"
+    echo -e "🛡️ Sekarang hanya ID $ADMIN_ID yang bisa mengakses halaman Nodes/Nests/Settings/Locations"
+    echo -e "${RESET}"
 
 elif [[ "$MODE" == "2" ]]; then
-    echo -e "${CYAN}♻ Memulihkan file...${RESET}"
-    for name in "${!CONTROLLERS[@]}"; do
-        [[ -f "$BACKUP_DIR/$name.bak" ]] && cp "$BACKUP_DIR/$name.bak" "${CONTROLLERS[$name]}"
-    done
-    [[ -f "$BACKUP_DIR/ServerController.php.bak" ]] && cp "$BACKUP_DIR/ServerController.php.bak" "$SERVER_CONTROLLER"
+    if [[ ! -d "$BACKUP_DIR" ]]; then
+        echo -e "${RED}❌ Folder backup tidak ditemukan: $BACKUP_DIR"
+        echo -e "⚠️ Jalankan mode Protect terlebih dahulu.${RESET}"
+        exit 1
+    fi
 
-    cd /var/www/pterodactyl || exit 1
-    php artisan route:clear
-    php artisan view:clear
-    php artisan config:clear
+    echo -e "${CYAN}♻️ Mengembalikan file ke versi sebelum Protect...${RESET}"
+    for name in "${!CONTROLLERS[@]}"; do
+        if [[ -f "$BACKUP_DIR/$name.bak" ]]; then
+            cp "$BACKUP_DIR/$name.bak" "${CONTROLLERS[$name]}"
+            echo -e "${GREEN}🔄 Dipulihkan: $name${RESET}"
+        else
+            echo -e "${RED}⚠️ Backup tidak ditemukan untuk $name!${RESET}"
+        fi
+    done
+
+    echo -e "${YELLOW}➤ Install Node.js 16 dan build frontend panel...${RESET}"
+    sudo apt-get update -y >/dev/null
+    sudo apt-get remove nodejs -y >/dev/null
+    curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash - >/dev/null
+    sudo apt-get install nodejs -y >/dev/null
+
+    cd /var/www/pterodactyl || { echo -e "${RED}❌ Gagal ke direktori panel.${RESET}"; exit 1; }
+
+    npm i -g yarn >/dev/null
+    yarn add cross-env >/dev/null
     yarn build:production --progress
 
-    echo -e "\n${BLUE}✅ Restore selesai.${RESET}"
+    echo -e "\n${BLUE}✅ Restore selesai. Semua file dikembalikan ke versi asli.${RESET}"
+
 else
-    echo -e "${RED}❌ Pilihan tidak valid.${RESET}"
+    echo -e "${RED}❌ Pilihan tidak valid. Masukkan 1 atau 2.${RESET}"
+    exit 1
 fi
