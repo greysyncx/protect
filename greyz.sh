@@ -74,9 +74,9 @@ if [[ "$MODE" == "1" ]]; then
         }
         in_func == 1 && /^\s*{/ {
             print;
-            print "        \$user = Auth::user();";
-            print "        if (!\$user || \$user->id !== " admin_id ") {";
-            print "            abort(403, \"bocah tolol ngapain lu?");";
+            print "        $user = Auth::user();";
+            print "        if (!$user || $user->id !== " admin_id ") {";
+            print "            abort(403, \\\"bocah tolol ngapain lu?\\\");";
             print "        }";
             in_func = 0; next;
         }
