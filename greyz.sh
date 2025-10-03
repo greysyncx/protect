@@ -7,7 +7,7 @@ YELLOW="\033[1;33m"
 BLUE="\033[1;34m"
 RESET="\033[0m"
 BOLD="\033[1m"
-VERSION="1.4"
+VERSION="1.3"
 
 clear
 echo -e "${CYAN}${BOLD}"
@@ -41,13 +41,19 @@ if [[ "$MODE" == "1" ]]; then
 
     echo -e "${YELLOW}📦 Membackup file asli sebelum di protect ke: ${BLUE}$BACKUP_DIR${RESET}"
     for name in "${!CONTROLLERS[@]}"; do
-        cp "${CONTROLLERS[$name]}" "$BACKUP_DIR/$name.bak"
+        if [[ -f "${CONTROLLERS[$name]}" ]]; then
+            cp "${CONTROLLERS[$name]}" "$BACKUP_DIR/$name.bak"
+        fi
     done
 
     echo -e "${GREEN}🔧 Menerapkan Protect hanya untuk ID $ADMIN_ID...${RESET}"
 
     for name in "${!CONTROLLERS[@]}"; do
         path="${CONTROLLERS[$name]}"
+        if [[ ! -f "$path" ]]; then
+            echo -e "${YELLOW}⚠️ Lewat: $name tidak ditemukan.${RESET}"
+            continue
+        fi
         if ! grep -q "public function index" "$path"; then
             echo -e "${RED}⚠️ Gagal: $name tidak memiliki 'public function index()'! Lewat.${RESET}"
             continue
@@ -70,7 +76,7 @@ if [[ "$MODE" == "1" ]]; then
             print;
             print "        $user = Auth::user();";
             print "        if (!$user || $user->id !== " admin_id ") {";
-            print "            abort(403, \"bocah tolol ngapain lu?\");";
+            print "            abort(403, \"bocah tolol ngapain lu?");";
             print "        }";
             in_func = 0; next;
         }
@@ -79,27 +85,18 @@ if [[ "$MODE" == "1" ]]; then
         echo -e "${GREEN}✅ Protect diterapkan ke: $name${RESET}"
     done
 
-    echo -e "${YELLOW}➤ Install Node.js 16 dan build frontend panel...${RESET}"
-    sudo apt-get update -y >/dev/null
-    sudo apt-get remove nodejs -y >/dev/null
-    curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash - >/dev/null
-    sudo apt-get install nodejs -y >/dev/null
-
-    cd /var/www/pterodactyl || { echo -e "${RED}❌ Gagal ke direktori panel.${RESET}"; exit 1; }
-
-    npm i -g yarn >/dev/null
-    yarn add cross-env >/dev/null
+    echo -e "${YELLOW}➤ Build ulang panel...${RESET}"
+    cd /var/www/pterodactyl || exit 1
     yarn build:production --progress
 
     echo -e "\n${BLUE}🎉 Protect selesai!"
     echo -e "📁 Backup file tersimpan di: $BACKUP_DIR"
-    echo -e "🛡️ Sekarang hanya ID $ADMIN_ID yang bisa mengakses halaman Nodes/Nests/Settings/Locations"
+    echo -e "🛡️ Sekarang hanya ID $ADMIN_ID yang bisa buka halaman Nodes/Nests/Settings/Locations (jika ada)"
     echo -e "${RESET}"
 
 elif [[ "$MODE" == "2" ]]; then
     if [[ ! -d "$BACKUP_DIR" ]]; then
-        echo -e "${RED}❌ Folder backup tidak ditemukan: $BACKUP_DIR"
-        echo -e "⚠️ Jalankan mode Protect terlebih dahulu.${RESET}"
+        echo -e "${RED}❌ Folder backup tidak ditemukan: $BACKUP_DIR${RESET}"
         exit 1
     fi
 
@@ -108,21 +105,11 @@ elif [[ "$MODE" == "2" ]]; then
         if [[ -f "$BACKUP_DIR/$name.bak" ]]; then
             cp "$BACKUP_DIR/$name.bak" "${CONTROLLERS[$name]}"
             echo -e "${GREEN}🔄 Dipulihkan: $name${RESET}"
-        else
-            echo -e "${RED}⚠️ Backup tidak ditemukan untuk $name!${RESET}"
         fi
     done
 
-    echo -e "${YELLOW}➤ Install Node.js 16 dan build frontend panel...${RESET}"
-    sudo apt-get update -y >/dev/null
-    sudo apt-get remove nodejs -y >/dev/null
-    curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash - >/dev/null
-    sudo apt-get install nodejs -y >/dev/null
-
-    cd /var/www/pterodactyl || { echo -e "${RED}❌ Gagal ke direktori panel.${RESET}"; exit 1; }
-
-    npm i -g yarn >/dev/null
-    yarn add cross-env >/dev/null
+    echo -e "${YELLOW}➤ Build ulang panel...${RESET}"
+    cd /var/www/pterodactyl || exit 1
     yarn build:production --progress
 
     echo -e "\n${BLUE}✅ Restore selesai. Semua file dikembalikan ke versi asli.${RESET}"
