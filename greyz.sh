@@ -23,7 +23,7 @@ declare -A CONTROLLERS=(
     ["NodeController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Nodes/NodeController.php"
     ["NestController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Nests/NestController.php"
     ["IndexController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Settings/IndexController.php"
-    ["LocationController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Locations/LocationController.php"
+    ["LocationController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/LocationController.php"
 )
 
 BACKUP_DIR="backup_greyz"
@@ -71,14 +71,17 @@ if [[ "$MODE" == "1" ]]; then
 
 elif [[ "$MODE" == "2" ]]; then
     echo -e "${CYAN}♻ Restore file backup...${RESET}"
-    ls -1t "$BACKUP_DIR" | head -n 10
-    read -p "Masukkan nama file backup yang mau dipulihkan: " FILE
-    if [[ -f "$BACKUP_DIR/$FILE" ]]; then
-        cp "$BACKUP_DIR/$FILE" "${CONTROLLERS[${FILE%%.*}]}"
-        echo -e "${GREEN}✔ Pulih: $FILE${RESET}"
-    else
-        echo -e "${RED}❌ File tidak ada.${RESET}"
-    fi
+    for name in "${!CONTROLLERS[@]}"; do
+        latest_file=$(ls -1t "$BACKUP_DIR" | grep "^$name" | head -n 1)
+        if [[ -n "$latest_file" ]]; then
+            cp "$BACKUP_DIR/$latest_file" "${CONTROLLERS[$name]}"
+            echo -e "${GREEN}✔ Pulih otomatis: $latest_file${RESET}"
+        else
+            echo -e "${YELLOW}⚠ Tidak ditemukan backup untuk $name${RESET}"
+        fi
+    done
+
+    echo -e "${GREEN}✅ Semua file telah dipulihkan ke versi backup terbaru.${RESET}"
 else
     echo -e "${RED}❌ Pilihan tidak valid.${RESET}"
 fi
