@@ -60,7 +60,7 @@ if [[ "$MODE" == "1" ]]; then
             print;
             print "        \$user = Auth::user();";
             print "        if (!\$user || \$user->id !== " admin_id ") {";
-            print "            abort(403, \"bocah tolol ngapain lu?\");";
+            print "            abort(403, \"❌ bocah tolol ngapain lu?\");";
             print "        }";
             in_func=0; next;
         }
@@ -81,8 +81,8 @@ if [[ "$MODE" == "1" ]]; then
             if ($0 ~ /{/) {
                 print "{";
                 print "        \$user = \$request->user();";
-                print "        if (\$user->id !== \$server->owner_id && !\$user->root_admin) {";
-                print "            abort(403, \"⚠️ Akses Ditolak: Kamu bukan pemilik server ini!\");";
+                print "        if (!\$user->root_admin && \$user->id !== \$server->owner_id) {";
+                print "            abort(403, \"⚠️ Anti-Intip GreyZ: Kamu tidak memiliki izin melihat server ini.\");";
                 print "        }";
                 next;
             }
