@@ -10,7 +10,7 @@ VERSION="1.4"
 clear
 echo -e "${CYAN}"
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║          GreyZ Protect (Nodes/Nests/Settings)        ║"
+echo "║      GreyZ Protect (Nodes/Nests/Settings/loc)        ║"
 echo "║                    Version $VERSION                  ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
