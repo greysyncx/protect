@@ -1,28 +1,31 @@
 #!/bin/bash
+# =====================================================
+# GreySync Protect v1.4 Final
+# Anti Edit & Anti Intip (Fix Auth API)
+# =====================================================
 
-# ====== Warna Terminal ======
 RED="\033[1;31m"
 GREEN="\033[1;32m"
 CYAN="\033[1;36m"
 YELLOW="\033[1;33m"
 RESET="\033[0m"
 
-VERSION="1.4"
+VERSION="1.4 Final"
 
 clear
 echo -e "${CYAN}"
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║          GreySync Protect (Anti Edit & Intip)        ║"
+echo "║             GreySync Protect (Anti Edit & Intip)     ║"
 echo "║                    Version $VERSION                  ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
 
-# ====== Menu Pilihan ======
+# ====== Menu ======
 echo -e "${YELLOW}1) Pasang Protect"
 echo -e "2) Restore Protect${RESET}"
 read -p "Pilih [1/2]: " MODE
 
-# ====== Lokasi File Controller ======
+# ====== Lokasi File ======
 declare -A CONTROLLERS=(
     ["UserController.php"]="/var/www/pterodactyl/app/Http/Controllers/Api/Application/Users/UserController.php"
     ["NodeController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Nodes/NodeController.php"
@@ -34,7 +37,7 @@ declare -A CONTROLLERS=(
 BACKUP_DIR="backup_greyz"
 mkdir -p "$BACKUP_DIR"
 
-# ====== Pasang Protect ======
+# ====== PASANG PROTECT ======
 if [[ "$MODE" == "1" ]]; then
     read -p "👤 Masukkan ID Admin Utama (contoh: 1): " ADMIN_ID
     if [[ -z "$ADMIN_ID" ]]; then
@@ -47,7 +50,7 @@ if [[ "$MODE" == "1" ]]; then
         cp "${CONTROLLERS[$name]}" "$BACKUP_DIR/$name.$(date +%F-%H%M%S).bak" 2>/dev/null
     done
 
-    # === Protect tiap file ===
+    # ====== Inject Protect ======
     for name in "${!CONTROLLERS[@]}"; do
         path="${CONTROLLERS[$name]}"
         if [[ ! -f "$path" ]]; then
@@ -55,21 +58,21 @@ if [[ "$MODE" == "1" ]]; then
             continue
         fi
 
-        # === Anti Edit User (API Controller) ===
+        # === Untuk API UserController (Anti Edit User) ===
         if [[ "$name" == "UserController.php" ]]; then
             awk -v admin_id="$ADMIN_ID" '
                 BEGIN { in_func=0 }
                 /^namespace / {
                     print;
-                    print "use Illuminate\\Support\\Facades\\Auth;";
+                    print "use Illuminate\\Http\\Request;";
                     next;
                 }
                 /public function update\(.*\)/ { print; in_func=1; next }
                 in_func==1 && /^\s*{/ {
                     print;
-                    print "        \$admin = Auth::user();";
+                    print "        \$admin = \$request->user();";
                     print "        if (!\$admin || \$admin->id !== " admin_id ") {";
-                    print "            return response()->json([\"error\" => \"❌ Lu Siapa Mau Edit User Lain Tolol?\"]);";
+                    print "            return response()->json([\"error\" => \"❌ Lu siapa mau edit user lain tolol?\"]);";
                     print "        }";
                     in_func=0; next;
                 }
@@ -80,7 +83,7 @@ if [[ "$MODE" == "1" ]]; then
             continue
         fi
 
-        # === Anti Intip Panel (Nodes/Nests/Settings/Loc) ===
+        # === Untuk Admin Controller (Anti Intip Panel) ===
         awk -v admin_id="$ADMIN_ID" '
             BEGIN { in_func=0 }
             /^namespace / {
@@ -105,7 +108,7 @@ if [[ "$MODE" == "1" ]]; then
 
     echo -e "${GREEN}🛡 Protect selesai untuk Admin ID $ADMIN_ID (tanpa rebuild panel).${RESET}"
 
-# ====== Restore Protect ======
+# ====== RESTORE ======
 elif [[ "$MODE" == "2" ]]; then
     echo -e "${CYAN}♻ Restore file backup...${RESET}"
     for name in "${!CONTROLLERS[@]}"; do
@@ -117,10 +120,8 @@ elif [[ "$MODE" == "2" ]]; then
             echo -e "${YELLOW}⚠ Tidak ditemukan backup untuk $name${RESET}"
         fi
     done
-
     echo -e "${GREEN}✅ Semua file telah dipulihkan ke versi backup terbaru.${RESET}"
 
-# ====== Pilihan Tidak Valid ======
 else
     echo -e "${RED}❌ Pilihan tidak valid.${RESET}"
 fi
