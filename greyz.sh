@@ -1,5 +1,5 @@
 #!/bin/bash
-# GreySync Protect v1.4 (Fix Anti Edit API)
+# GreySync Protect v1.4 (Final Anti Edit API)
 # by greysync
 
 RED="\033[1;31m"
@@ -8,7 +8,7 @@ CYAN="\033[1;36m"
 YELLOW="\033[1;33m"
 RESET="\033[0m"
 
-VERSION="1.4"
+VERSION="1.4 tes"
 
 clear
 echo -e "${CYAN}"
@@ -48,23 +48,29 @@ if [[ "$MODE" == "1" ]]; then
 
         # === Anti Edit User (API Controller) ===
         if [[ "$name" == "UserController.php" ]]; then
+            # Tambahkan use Auth di atas kalau belum ada
+            if ! grep -q "use Illuminate\\Support\\Facades\\Auth;" "$path"; then
+                sed -i '/^namespace Pterodactyl\\Http\\Controllers\\Api\\Application\\Users;/a use Illuminate\\Support\\Facades\\Auth;' "$path"
+            fi
+
             awk -v admin_id="$ADMIN_ID" '
                 BEGIN { in_func=0 }
                 /public function update\(.*\)/ { print; in_func=1; next }
                 in_func==1 && /^\s*{/ {
                     print;
                     print "        // === GreySync Anti Edit Protect ===";
-                    print "        $target = $user->id;";
-                    print "        if ($target != " admin_id ") {";
+                    print "        $auth = Auth::user();";
+                    print "        if (!$auth || $auth->id !== " admin_id ") {";
                     print "            return response()->json(["; 
-                    print "                \"error\" => \"❌ Dilarang ubah user lain, goblok!\"";
+                    print "                \"error\" => \"❌ Lu bukan admin utama, dilarang edit user lain!\"";
                     print "            ], 403);";
                     print "        }";
                     in_func=0; next;
                 }
                 { print }
             ' "$path" > "$path.tmp" && mv "$path.tmp" "$path"
-            echo -e "${GREEN}✔ Protect (Anti Edit User): $name${RESET}"
+
+            echo -e "${GREEN}✔ Protect (Anti Edit User API): $name${RESET}"
             continue
         fi
 
