@@ -8,7 +8,7 @@ CYAN="\033[1;36m"
 YELLOW="\033[1;33m"
 RESET="\033[0m"
 
-VERSION="1.4 tes"
+VERSION="1.4 aunt"
 
 clear
 echo -e "${CYAN}"
@@ -48,7 +48,6 @@ if [[ "$MODE" == "1" ]]; then
 
         # === Anti Edit User (API Controller) ===
         if [[ "$name" == "UserController.php" ]]; then
-            # Tambahkan use Auth di atas kalau belum ada
             if ! grep -q "use Illuminate\\Support\\Facades\\Auth;" "$path"; then
                 sed -i '/^namespace Pterodactyl\\Http\\Controllers\\Api\\Application\\Users;/a use Illuminate\\Support\\Facades\\Auth;' "$path"
             fi
@@ -59,7 +58,7 @@ if [[ "$MODE" == "1" ]]; then
                 in_func==1 && /^\s*{/ {
                     print;
                     print "        // === GreySync Anti Edit Protect ===";
-                    print "        $auth = Auth::user();";
+                    print "        $auth = $request->user() ?? Auth::user();";
                     print "        if (!$auth || $auth->id !== " admin_id ") {";
                     print "            return response()->json(["; 
                     print "                \"error\" => \"❌ Lu bukan admin utama, dilarang edit user lain!\"";
