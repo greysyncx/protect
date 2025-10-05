@@ -8,8 +8,8 @@ CYAN="\033[1;36m"
 YELLOW="\033[1;33m"
 RESET="\033[0m"
 
-VERSION="1.7"
-BACKUP_DIR="/root/greysync_backups"
+VERSION="1.5"
+BACKUP_DIR="/root/greysync_backupsx"
 mkdir -p "$BACKUP_DIR"
 
 clear
@@ -18,10 +18,10 @@ echo "╔═══════════════════════�
 echo "║              GreySync Protect — Auto Mode v${VERSION}          ║"
 echo "╚════════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
-echo "1) Pasang Proteksi (Anti Edit + Anti Intip)"
-echo "2) Restore Backup Terakhir"
-echo
-read -p "Pilih menu (1/2): " MENU
+
+echo -e "${YELLOW}[1]${RESET} Pasang Protect GreyZ"
+echo -e "${YELLOW}[2]${RESET} Restore dari Backup Terakhir"
+read -p "$(echo -e "${CYAN}Pilih opsi [1/2]: ${RESET}")" MENU
 
 if [[ "$MENU" == "1" ]]; then
   read -p "👤 Masukkan ID Admin Utama (contoh: 1): " ADMIN_ID
@@ -68,7 +68,7 @@ if [[ "$MENU" == "1" ]]; then
           print "        // === GreySync Anti Edit Protect (API) ==="
           print "        $auth = $request->user() ?? Auth::user();"
           print "        if (!\$auth || (\$auth->id !== \$user->id && \$auth->id != " admin_id ")) {"
-          print "            return response()->json([\"error\" => \"❌ Lu Siapa Mau Edit User Lain Tolol?\"], 403);"
+          print "            return response()->json([\"error\" => \"❌ Lu Siapa Mau Edit User Lain? Jasa Pasang Anti-Rusuh t.me/greysyncx\"], 403);"
           print "        }"
           inserted=1
           in_func=0
@@ -99,7 +99,7 @@ if [[ "$MENU" == "1" ]]; then
           print "        // === GreySync Anti Edit Protect (Admin) ==="
           print "        $auth = \$request->user() ?? Auth::user();"
           print "        if (!\$auth || (\$auth->id !== \$user->id && \$auth->id != " admin_id ")) {"
-          print "            return redirect()->back()->withErrors([\"error\" => \"❌ Lu Siapa Mau Edit User Lain Tolol?\"]);"
+          print "            return redirect()->back()->withErrors([\"error\" => \"❌ Lu Siapa Mau Edit User Lain? Jasa Pasang Anti-Rusuh t.me/greysyncx\"]);"
           print "        }"
           inserted=1
           in_func=0
@@ -150,7 +150,7 @@ if [[ "$MENU" == "1" ]]; then
           print "        // === GreySync Anti Intip Protect ===";
           print "        $user = Auth::user();";
           print "        if (!$user || $user->id != " admin_id ") {";
-          print "            abort(403, \"❌ Bocah tolol ngapain lu?\");";
+          print "            abort(403, \"❌ GreySync Protect: Mau Ngapain Bang? Jasa Pasang Anti-Rusuh t.me/greysyncx\");";
           print "        }";
           found=0; next;
         }
