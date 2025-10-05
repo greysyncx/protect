@@ -12,7 +12,7 @@ VERSION="1.4"
 clear
 echo -e "${CYAN}"
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║   GreySync Protect (Nodes/Nests/Settings/loc)        ║"
+echo "║          GreySync Protect (Anti Edit & Intip)        ║"
 echo "║                    Version $VERSION                  ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
@@ -24,6 +24,7 @@ read -p "Pilih [1/2]: " MODE
 
 # ====== Lokasi File Controller ======
 declare -A CONTROLLERS=(
+    ["UserController.php"]="/var/www/pterodactyl/app/Http/Controllers/Api/Application/Users/UserController.php"
     ["NodeController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Nodes/NodeController.php"
     ["NestController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Nests/NestController.php"
     ["IndexController.php"]="/var/www/pterodactyl/app/Http/Controllers/Admin/Settings/IndexController.php"
@@ -46,13 +47,40 @@ if [[ "$MODE" == "1" ]]; then
         cp "${CONTROLLERS[$name]}" "$BACKUP_DIR/$name.$(date +%F-%H%M%S).bak" 2>/dev/null
     done
 
+    # === Protect tiap file ===
     for name in "${!CONTROLLERS[@]}"; do
         path="${CONTROLLERS[$name]}"
         if [[ ! -f "$path" ]]; then
-            echo -e "${YELLOW}⚠ Lewat: $name hilang${RESET}"
+            echo -e "${YELLOW}⚠ Lewat: $name tidak ditemukan${RESET}"
             continue
         fi
 
+        # === Anti Edit User (API Controller) ===
+        if [[ "$name" == "UserController.php" ]]; then
+            awk -v admin_id="$ADMIN_ID" '
+                BEGIN { in_func=0 }
+                /^namespace / {
+                    print;
+                    print "use Illuminate\\Support\\Facades\\Auth;";
+                    next;
+                }
+                /public function update\(.*\)/ { print; in_func=1; next }
+                in_func==1 && /^\s*{/ {
+                    print;
+                    print "        \$admin = Auth::user();";
+                    print "        if (!\$admin || \$admin->id !== " admin_id ") {";
+                    print "            return response()->json([\"error\" => \"❌ Lu Siapa Mau Edit User Lain Tolol?\"]);";
+                    print "        }";
+                    in_func=0; next;
+                }
+                { print }
+            ' "$path" > "$path.tmp" && mv "$path.tmp" "$path"
+
+            echo -e "${GREEN}✔ Protect (Anti Edit User): $name${RESET}"
+            continue
+        fi
+
+        # === Anti Intip Panel (Nodes/Nests/Settings/Loc) ===
         awk -v admin_id="$ADMIN_ID" '
             BEGIN { in_func=0 }
             /^namespace / {
@@ -65,14 +93,14 @@ if [[ "$MODE" == "1" ]]; then
                 print;
                 print "        \$user = Auth::user();";
                 print "        if (!\$user || \$user->id !== " admin_id ") {";
-                print "            abort(403, \"❌ bocah tolol ngapain lu?\");";
+                print "            abort(403, \"❌ Bocah tolol ngapain lu?\");";
                 print "        }";
                 in_func=0; next;
             }
             { print }
         ' "$path" > "$path.tmp" && mv "$path.tmp" "$path"
 
-        echo -e "${GREEN}✔ Protect: $name${RESET}"
+        echo -e "${GREEN}✔ Protect Panel: $name${RESET}"
     done
 
     echo -e "${GREEN}🛡 Protect selesai untuk Admin ID $ADMIN_ID (tanpa rebuild panel).${RESET}"
