@@ -6,7 +6,7 @@ CYAN="\033[1;36m"
 YELLOW="\033[1;33m"
 RESET="\033[0m"
 BOLD="\033[1m"
-VERSION="1.5 Final"
+VERSION="1.5"
 
 clear
 echo -e "${CYAN}${BOLD}"
@@ -24,7 +24,7 @@ read -p "$(echo -e "${CYAN}Pilih opsi [1/2/3]: ${RESET}")" OPSI
 CONTROLLER_USER="/var/www/pterodactyl/app/Http/Controllers/Admin/UserController.php"
 SERVICE_SERVER="/var/www/pterodactyl/app/Services/Servers/ServerDeletionService.php"
 API_SERVER_CONTROLLER="/var/www/pterodactyl/app/Http/Controllers/Api/Client/Servers/ServerController.php"
-BACKUP_DIR="backup_greysync"
+BACKUP_DIR="backup_greysyncx"
 
 mkdir -p "$BACKUP_DIR"
 
@@ -44,7 +44,7 @@ if [ "$OPSI" = "1" ]; then
     in_func == 1 && /^\s*{/ {
         print;
         print "        if ($request->user()->id !== " admin_id ") {";
-        print "            throw new DisplayException(\"Lu siapa mau hapus user lain tolol?\\n©GreySync黙\");";
+        print "            throw new DisplayException(\"Lu siapa mau hapus user lain tolol?\\nJasa Pasang Anti-Rusuh t.me/greysyncx\");";
         print "        }";
         in_func = 0; next;
     }
@@ -62,7 +62,7 @@ if [ "$OPSI" = "1" ]; then
         print;
         print "        \$user = Auth::user();";
         print "        if (\$user && \$user->id !== " admin_id ") {";
-        print "            throw new DisplayException(\"Lu siapa mau hapus server orang tolol?\\n©GreySync黙\");";
+        print "            throw new DisplayException(\"Lu siapa mau hapus server orang tolol?\\nJasa Pasang Anti-Rusuh t.me/greysyncx\");";
         print "        }";
         in_func = 0; next;
     }
@@ -77,14 +77,14 @@ if [ "$OPSI" = "1" ]; then
         print;
         print "        $user = $request->user();";
         print "        if ($user->id !== $server->owner_id && $user->id !== " admin_id ") {";
-        print "            abort(403, \"❌ Lu siapa mau intip server orang!\");";
+        print "            abort(403, \"❌ Lu siapa mau intip server orang! Jasa Pasang Anti-Rusuh t.me/greysyncx\");";
         print "        }";
         in_func = 0; next;
     }
     { print }' "$API_SERVER_CONTROLLER" > "$API_SERVER_CONTROLLER.tmp" && mv "$API_SERVER_CONTROLLER.tmp" "$API_SERVER_CONTROLLER"
     echo -e "${GREEN}✔ Anti Intip Server selesai.${RESET}"
 
-    echo -e "${GREEN}🎉 Protect v$VERSION berhasil dipasang. Tidak perlu rebuild panel.${RESET}"
+    echo -e "${GREEN}🎉 Protect v$VERSION berhasil dipasang${RESET}"
 
 elif [ "$OPSI" = "2" ]; then
     echo -e "${CYAN}♻ Mengembalikan semua file dari backup terbaru...${RESET}"
