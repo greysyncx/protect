@@ -1,119 +1,197 @@
-#!/bin/bash
-# GreySync Protect v1.5 (Final Auto-Detect + Restore)
-# by greysync
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
 
 RED="\033[1;31m"
 GREEN="\033[1;32m"
 CYAN="\033[1;36m"
 YELLOW="\033[1;33m"
 RESET="\033[0m"
-VERSION="1.5"
 
-clear
-echo -e "${CYAN}"
-echo "╔══════════════════════════════════════════════════════╗"
-echo "║        GreySync Protect (Anti Edit & Anti Intip)     ║"
-echo "║                   Version $VERSION                   ║"
-echo "╚══════════════════════════════════════════════════════╝"
-echo -e "${RESET}"
-
-echo -e "${YELLOW}1) Pasang Protect"
-echo -e "2) Restore Protect${RESET}"
-read -p "Pilih [1/2]: " MODE
-
+VERSION="1.7"
 BACKUP_DIR="/root/greysync_backups"
 mkdir -p "$BACKUP_DIR"
 
-API_PATHS=(
-  "/var/www/pterodactyl/app/Http/Controllers/Api/Application/Users/UserController.php"
-  "/var/www/pterodactyl/app/Http/Controllers/Api/Users/UserController.php"
-  "/var/www/pterodactyl/app/Http/Controllers/Api/Application/UserController.php"
-)
-ADMIN_PATHS=(
-  "/var/www/pterodactyl/app/Http/Controllers/Admin/UserController.php"
-  "/var/www/pterodactyl/app/Http/Controllers/Admin/Users/UserController.php"
-  "/var/www/pterodactyl/app/Http/Controllers/Admin/UsersController.php"
-)
-PANEL_PATHS=(
-  "/var/www/pterodactyl/app/Http/Controllers/Admin/Nodes/NodeController.php"
-  "/var/www/pterodactyl/app/Http/Controllers/Admin/Nests/NestController.php"
-  "/var/www/pterodactyl/app/Http/Controllers/Admin/Settings/IndexController.php"
-  "/var/www/pterodactyl/app/Http/Controllers/Admin/LocationController.php"
-)
+clear
+echo -e "${CYAN}"
+echo "╔════════════════════════════════════════════════════════╗"
+echo "║              GreySync Protect — Auto Mode v${VERSION}          ║"
+echo "╚════════════════════════════════════════════════════════╝"
+echo -e "${RESET}"
+echo "1) Pasang Proteksi (Anti Edit + Anti Intip)"
+echo "2) Restore Backup Terakhir"
+echo
+read -p "Pilih menu (1/2): " MENU
 
-if [[ "$MODE" == "1" ]]; then
-    read -p "👤 Masukkan ID Admin Utama (contoh: 1): " ADMIN_ID
-    [[ -z "$ADMIN_ID" ]] && echo -e "${RED}❌ Admin ID kosong.${RESET}" && exit 1
+if [[ "$MENU" == "1" ]]; then
+  read -p "👤 Masukkan ID Admin Utama (contoh: 1): " ADMIN_ID
+  if [[ -z "$ADMIN_ID" ]]; then
+    echo -e "${RED}❌ Admin ID tidak boleh kosong.${RESET}"
+    exit 1
+  fi
 
-    echo -e "${YELLOW}📦 Membackup file asli ke: $BACKUP_DIR${RESET}"
+  API_CANDIDATES=(
+    "/var/www/pterodactyl/app/Http/Controllers/Api/Application/Users/UserController.php"
+    "/var/www/pterodactyl/app/Http/Controllers/Api/Users/UserController.php"
+    "/var/www/pterodactyl/app/Http/Controllers/Api/Application/UserController.php"
+  )
 
-    # === Cari dan patch API UserController ===
-    for path in "${API_PATHS[@]}"; do
-        if [[ -f "$path" ]]; then
-            cp "$path" "$BACKUP_DIR/$(basename "$path").$(date +%F-%H%M%S).bak"
-            echo -e "${YELLOW}➤ Menemukan API Controller: $path${RESET}"
+  ADMIN_CANDIDATES=(
+    "/var/www/pterodactyl/app/Http/Controllers/Admin/UserController.php"
+    "/var/www/pterodactyl/app/Http/Controllers/Admin/Users/UserController.php"
+    "/var/www/pterodactyl/app/Http/Controllers/Admin/UsersController.php"
+    "/var/www/pterodactyl/app/Http/Controllers/Admin/UserManagementController.php"
+  )
 
-            if ! grep -q "use Illuminate\\Support\\Facades\\Auth;" "$path"; then
-                sed -i '/^namespace /a use Illuminate\\Support\\Facades\\Auth;' "$path"
-            fi
+  PATCHED=()
 
-            awk -v admin_id="$ADMIN_ID" '
-                BEGIN { in_func=0 }
-                /public function update\(.*\)/ { print; in_func=1; next }
-                in_func==1 && /^\s*{/ {
-                    print;
-                    print "        // === GreySync Anti Edit Protect ===";
-                    print "        $auth = $request->user() ?? Auth::user();";
-                    print "        if (!$auth || ($auth->id !== $user->id && $auth->id != " admin_id ")) {";
-                    print "            return response()->json([\"error\" => \"❌ Lu siapa mau edit user lain tolol!\"], 403);";
-                    print "        }";
-                    in_func=0; next;
-                }
-                { print }
-            ' "$path" > "$path.tmp" && mv "$path.tmp" "$path"
+  backup_file() {
+    local f="$1"
+    [[ -f "$f" ]] && cp "$f" "$BACKUP_DIR/$(basename "$f").$(date +%F-%H%M%S).bak"
+  }
 
-            echo -e "${GREEN}✔ Protect (Anti Edit User API) selesai.${RESET}"
-            break
-        fi
+  inject_api_protect() {
+    local path="$1"
+    echo -e "${YELLOW}⚙ Inject API anti-edit → ${path}${RESET}"
+    backup_file "$path"
+
+    if ! grep -q "use Illuminate\\Support\\Facades\\Auth;" "$path"; then
+      sed -i '/^namespace /a use Illuminate\\Support\\Facades\\Auth;' "$path"
+    fi
+
+    awk -v admin_id="$ADMIN_ID" '
+      BEGIN { in_func=0; inserted=0 }
+      /public function update[[:space:]]*\(.*\)/ { print; in_func=1; next }
+      in_func==1 {
+        if (/\{/ && inserted==0) {
+          print
+          print "        // === GreySync Anti Edit Protect (API) ==="
+          print "        $auth = $request->user() ?? Auth::user();"
+          print "        if (!\$auth || (\$auth->id !== \$user->id && \$auth->id != " admin_id ")) {"
+          print "            return response()->json([\"error\" => \"❌ Lu Siapa Mau Edit User Lain Tolol?\"], 403);"
+          print "        }"
+          inserted=1
+          in_func=0
+          next
+        }
+      }
+      { print }
+    ' "$path" > "$path.tmp" && mv "$path.tmp" "$path"
+
+    PATCHED+=("$path")
+  }
+
+  inject_admin_protect() {
+    local path="$1"
+    echo -e "${YELLOW}⚙ Inject Admin-web anti-edit → ${path}${RESET}"
+    backup_file "$path"
+
+    if ! grep -q "use Illuminate\\Support\\Facades\\Auth;" "$path"; then
+      sed -i '/^namespace /a use Illuminate\\Support\\Facades\\Auth;' "$path"
+    fi
+
+    awk -v admin_id="$ADMIN_ID" '
+      BEGIN { in_func=0; inserted=0 }
+      /public function update[[:space:]]*\(.*\)/ { print; in_func=1; next }
+      in_func==1 {
+        if (/\{/ && inserted==0) {
+          print
+          print "        // === GreySync Anti Edit Protect (Admin) ==="
+          print "        $auth = \$request->user() ?? Auth::user();"
+          print "        if (!\$auth || (\$auth->id !== \$user->id && \$auth->id != " admin_id ")) {"
+          print "            return redirect()->back()->withErrors([\"error\" => \"❌ Lu Siapa Mau Edit User Lain Tolol?\"]);"
+          print "        }"
+          inserted=1
+          in_func=0
+          next
+        }
+      }
+      { print }
+    ' "$path" > "$path.tmp" && mv "$path.tmp" "$path"
+
+    PATCHED+=("$path")
+  }
+
+  # Detect API UserController
+  for p in "${API_CANDIDATES[@]}"; do
+    if [[ -f "$p" ]]; then
+      echo -e "${GREEN}✔ Found API UserController:${RESET} $p"
+      inject_api_protect "$p"
+      break
+    fi
+  done
+
+  # Detect Admin UserController
+  for p in "${ADMIN_CANDIDATES[@]}"; do
+    if [[ -f "$p" ]]; then
+      echo -e "${GREEN}✔ Found Admin UserController:${RESET} $p"
+      inject_admin_protect "$p"
+      break
+    fi
+  done
+
+  # Protect Panel (Nodes, Nests, Settings, Location)
+  ADMIN_PANEL_DIR="/var/www/pterodactyl/app/Http/Controllers/Admin"
+  panel_targets=("Nodes/NodeController.php" "Nests/NestController.php" "Settings/IndexController.php" "LocationController.php")
+  for t in "${panel_targets[@]}"; do
+    full="$ADMIN_PANEL_DIR/$t"
+    if [[ -f "$full" ]]; then
+      echo -e "${GREEN}✔ Found Panel Controller:${RESET} $full"
+      backup_file "$full"
+      if ! grep -q "use Illuminate\\Support\\Facades\\Auth;" "$full"; then
+        sed -i '/^namespace /a use Illuminate\\Support\\Facades\\Auth;' "$full"
+      fi
+
+      awk -v admin_id="$ADMIN_ID" '
+        BEGIN { found=0 }
+        /public function index[[:space:]]*\(.*\)/ { print; found=1; next }
+        found==1 && /^\s*{/ {
+          print;
+          print "        // === GreySync Anti Intip Protect ===";
+          print "        $user = Auth::user();";
+          print "        if (!$user || $user->id != " admin_id ") {";
+          print "            abort(403, \"❌ Bocah tolol ngapain lu?\");";
+          print "        }";
+          found=0; next;
+        }
+        { print }
+      ' "$full" > "$full.tmp" && mv "$full.tmp" "$full"
+
+      PATCHED+=("$full")
+    fi
+  done
+
+  echo
+  if [[ ${#PATCHED[@]} -eq 0 ]]; then
+    echo -e "${YELLOW}⚠ Tidak ditemukan file target untuk dipatch.${RESET}"
+  else
+    echo -e "${GREEN}✅ Proteksi berhasil diterapkan ke file:${RESET}"
+    for f in "${PATCHED[@]}"; do
+      echo -e "  • ${YELLOW}$f${RESET}"
     done
+    echo
+    echo -e "${CYAN}🛡  Sistem kini terlindungi dari edit & intip tidak sah.${RESET}"
+  fi
 
-    # === Patch Panel Controller ===
-    for path in "${PANEL_PATHS[@]}"; do
-        if [[ -f "$path" ]]; then
-            cp "$path" "$BACKUP_DIR/$(basename "$path").$(date +%F-%H%M%S).bak"
-            awk -v admin_id="$ADMIN_ID" '
-                BEGIN { done=0 }
-                /public function index\(.*\)/ { print; in_func=1; next }
-                in_func==1 && /^\s*{/ {
-                    print;
-                    print "        // === GreySync Anti Intip Protect ===";
-                    print "        $user = Auth::user();";
-                    print "        if (!$user || $user->id != " admin_id ") abort(403, \"❌ Bocah tolol ngapain lu?\");";
-                    in_func=0; next;
-                }
-                { print }
-            ' "$path" > "$path.tmp" && mv "$path.tmp" "$path"
+elif [[ "$MENU" == "2" ]]; then
+  echo -e "${CYAN}🔄 Memulihkan file dari backup terbaru...${RESET}"
+  shopt -s nullglob
+  LATEST_FILES=$(ls -1t "$BACKUP_DIR"/*.bak 2>/dev/null || true)
 
-            echo -e "${GREEN}✔ Protect (Anti Intip Panel): $(basename "$path")${RESET}"
-        fi
-    done
+  if [[ -z "$LATEST_FILES" ]]; then
+    echo -e "${RED}❌ Tidak ada file backup ditemukan.${RESET}"
+    exit 1
+  fi
 
-    echo -e "${GREEN}🛡 Protect aktif untuk Admin ID $ADMIN_ID tanpa rebuild panel.${RESET}"
+  for bak in $LATEST_FILES; do
+    fname=$(basename "$bak" | sed 's/\.[0-9-]*\.bak$//')
+    find /var/www/pterodactyl/app/Http/Controllers -type f -name "$fname" -exec cp "$bak" {} \; 2>/dev/null || true
+  done
 
-elif [[ "$MODE" == "2" ]]; then
-    echo -e "${CYAN}♻ Mengembalikan file dari backup...${RESET}"
-    for file in "${API_PATHS[@]}" "${PANEL_PATHS[@]}"; do
-        name=$(basename "$file")
-        latest=$(ls -1t "$BACKUP_DIR" | grep "^$name" | head -n 1)
-        if [[ -n "$latest" ]]; then
-            cp "$BACKUP_DIR/$latest" "$file"
-            echo -e "${GREEN}✔ Dipulihkan: $name${RESET}"
-        else
-            echo -e "${YELLOW}⚠ Tidak ditemukan backup untuk $name${RESET}"
-        fi
-    done
-    echo -e "${GREEN}✅ Semua file telah dipulihkan.${RESET}"
+  echo -e "${GREEN}✅ Semua file berhasil dikembalikan dari backup terbaru.${RESET}"
+  echo -e "${CYAN}📁 Lokasi backup: ${YELLOW}$BACKUP_DIR${RESET}"
 
 else
-    echo -e "${RED}❌ Pilihan tidak valid.${RESET}"
+  echo -e "${RED}❌ Pilihan tidak valid.${RESET}"
+  exit 1
 fi
