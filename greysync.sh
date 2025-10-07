@@ -11,8 +11,8 @@ VERSION="1.5"
 clear
 echo -e "${CYAN}${BOLD}"
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║         GreySync Protect + Panel Builder             ║"
-echo "║                    Version $VERSION                  ║"
+echo "║         GreySync Protect + Panel Grey             ║"
+echo "║                    Version $VERSION                       ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
 
@@ -29,7 +29,7 @@ BACKUP_DIR="backup_greysyncx"
 mkdir -p "$BACKUP_DIR"
 
 if [ "$OPSI" = "1" ]; then
-    read -p "$(echo -e "${CYAN}Masukkan User ID Admin Utama (contoh: 1): ${RESET}")" ADMIN_ID
+    read -p "$(echo -e "${CYAN}👤 Masukkan User ID Admin Utama (contoh: 1): ${RESET}")" ADMIN_ID
 
     echo -e "${YELLOW}➤ Membuat backup sebelum patch...${RESET}"
     DATE_TAG=$(date +%F-%H%M%S)
