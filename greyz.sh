@@ -15,7 +15,7 @@ mkdir -p "$BACKUP_DIR"
 clear
 echo -e "${CYAN}"
 echo "╔════════════════════════════════════════════════════════╗"
-echo "║              GreySync Protect — Auto Mode v${VERSION}          ║"
+echo "║              GreySync Protect — Auto Mode v${VERSION}         ║"
 echo "╚════════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
 
