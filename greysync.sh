@@ -44,7 +44,7 @@ if [ "$OPSI" = "1" ]; then
     in_func == 1 && /^\s*{/ {
         print;
         print "        if ($request->user()->id !== " admin_id ") {";
-        print "            throw new DisplayException(\"Lu siapa mau hapus user lain tolol?\\nJasa Pasang Anti-Rusuh t.me/greysyncx\");";
+        print "            throw new DisplayException(\"🤬 Lu siapa mau hapus user lain?\\nJasa Pasang Anti-Rusuh t.me/greysyncx\");";
         print "        }";
         in_func = 0; next;
     }
@@ -62,7 +62,7 @@ if [ "$OPSI" = "1" ]; then
         print;
         print "        \$user = Auth::user();";
         print "        if (\$user && \$user->id !== " admin_id ") {";
-        print "            throw new DisplayException(\"Lu siapa mau hapus server orang tolol?\\nJasa Pasang Anti-Rusuh t.me/greysyncx\");";
+        print "            throw new DisplayException(\"🤬 Lu siapa mau hapus server orang?\\nJasa Pasang Anti-Rusuh t.me/greysyncx\");";
         print "        }";
         in_func = 0; next;
     }
