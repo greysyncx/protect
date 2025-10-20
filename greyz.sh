@@ -8,14 +8,16 @@ CYAN="\033[1;36m"
 YELLOW="\033[1;33m"
 RESET="\033[0m"
 
-VERSION="1.5"
+VERSION="1.6"
 BACKUP_DIR="/root/greysync_backupsx"
 mkdir -p "$BACKUP_DIR"
+
+ADMIN_ID_ARG="${1:-}"
 
 clear
 echo -e "${CYAN}"
 echo "╔════════════════════════════════════════════════════════╗"
-echo "║              GreySync Protect — Auto Mode v${VERSION}         ║"
+echo "║             GreySync Admin Protect v${VERSION}               ║"
 echo "╚════════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
 
@@ -23,13 +25,18 @@ echo -e "${YELLOW}[1]${RESET} Pasang Protect GreyZ"
 echo -e "${YELLOW}[2]${RESET} Restore dari Backup Terakhir"
 read -p "$(echo -e "${CYAN}Pilih opsi [1/2]: ${RESET}")" MENU
 
-if [[ "$MENU" == "1" ]]; then
+if [[ -n "$ADMIN_ID_ARG" ]]; then
+  ADMIN_ID="$ADMIN_ID_ARG"
+  echo -e "${YELLOW}⚙️ Menggunakan ID Admin dari bot: ${GREEN}${ADMIN_ID}${RESET}"
+else
   read -p "👤 Masukkan ID Admin Utama (contoh: 1): " ADMIN_ID
   if [[ -z "$ADMIN_ID" ]]; then
     echo -e "${RED}❌ Admin ID tidak boleh kosong.${RESET}"
     exit 1
   fi
+fi
 
+if [[ "$MENU" == "1" ]]; then
   API_CANDIDATES=(
     "/var/www/pterodactyl/app/Http/Controllers/Api/Application/Users/UserController.php"
     "/var/www/pterodactyl/app/Http/Controllers/Api/Users/UserController.php"
