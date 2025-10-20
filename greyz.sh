@@ -7,12 +7,18 @@ GREEN="\033[1;32m"
 CYAN="\033[1;36m"
 YELLOW="\033[1;33m"
 RESET="\033[0m"
+VERSION="1.5"
 
-VERSION="1.6"
 BACKUP_DIR="/root/greysync_backupsx"
 mkdir -p "$BACKUP_DIR"
 
 ADMIN_ID_ARG="${1:-}"
+AUTO_MODE=0
+
+# Deteksi mode otomatis (kalau ada argumen angka)
+if [[ "$ADMIN_ID_ARG" =~ ^[0-9]+$ ]]; then
+  AUTO_MODE=1
+fi
 
 clear
 echo -e "${CYAN}"
@@ -21,28 +27,97 @@ echo "║             GreySync Admin Protect v${VERSION}               ║"
 echo "╚════════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
 
-echo -e "${YELLOW}[1]${RESET} Pasang Protect GreyZ"
-echo -e "${YELLOW}[2]${RESET} Restore dari Backup Terakhir"
-read -p "$(echo -e "${CYAN}Pilih opsi [1/2]: ${RESET}")" MENU
-
-if [[ -n "$ADMIN_ID_ARG" ]]; then
+if [ "$AUTO_MODE" -eq 1 ]; then
+  MENU=1
   ADMIN_ID="$ADMIN_ID_ARG"
-  echo -e "${YELLOW}⚙️ Menggunakan ID Admin dari bot: ${GREEN}${ADMIN_ID}${RESET}"
+  echo -e "${YELLOW}⚙️ Mode otomatis aktif.${RESET}"
+  echo -e "${GREEN}➡ Menjalankan instalasi otomatis untuk Admin ID: ${ADMIN_ID}${RESET}"
 else
-  read -p "👤 Masukkan ID Admin Utama (contoh: 1): " ADMIN_ID
-  if [[ -z "$ADMIN_ID" ]]; then
-    echo -e "${RED}❌ Admin ID tidak boleh kosong.${RESET}"
-    exit 1
-  fi
+  echo -e "${YELLOW}[1]${RESET} Pasang Protect GreyZ"
+  echo -e "${YELLOW}[2]${RESET} Restore dari Backup Terakhir"
+  read -p "$(echo -e "${CYAN}Pilih opsi [1/2]: ${RESET}")" MENU
+
+  read -p "$(echo -e "${CYAN}👤 Masukkan ID Admin Utama (contoh: 1): ${RESET}")" ADMIN_ID
 fi
 
+if [[ -z "$ADMIN_ID" ]]; then
+  echo -e "${RED}❌ Admin ID tidak boleh kosong.${RESET}"
+  exit 1
+fi
+
+# ========== Backup helper ==========
+backup_file() {
+  local f="$1"
+  [[ -f "$f" ]] && cp "$f" "$BACKUP_DIR/$(basename "$f").$(date +%F-%H%M%S).bak"
+}
+
+# ========== Inject Protect API ==========
+inject_api_protect() {
+  local path="$1"
+  echo -e "${YELLOW}⚙ Inject API anti-edit → ${path}${RESET}"
+  backup_file "$path"
+
+  if ! grep -q "use Illuminate\\Support\\Facades\\Auth;" "$path"; then
+    sed -i '/^namespace /a use Illuminate\\Support\\Facades\\Auth;' "$path"
+  fi
+
+  awk -v admin_id="$ADMIN_ID" '
+    BEGIN { in_func=0; inserted=0 }
+    /public function update[[:space:]]*\(.*\)/ { print; in_func=1; next }
+    in_func==1 {
+      if (/\{/ && inserted==0) {
+        print
+        print "        // === GreySync Anti Edit Protect (API) ==="
+        print "        $auth = $request->user() ?? Auth::user();"
+        print "        if (!\$auth || (\$auth->id !== \$user->id && \$auth->id != " admin_id ")) {"
+        print "            return response()->json([\"error\" => \"😹 Lu Siapa Mau Edit User Lain? Jasa Pasang Anti-Rusuh t.me/greysyncx\"], 403);"
+        print "        }"
+        inserted=1
+        in_func=0
+        next
+      }
+    }
+    { print }
+  ' "$path" > "$path.tmp" && mv "$path.tmp" "$path"
+}
+
+# ========== Inject Protect Admin ==========
+inject_admin_protect() {
+  local path="$1"
+  echo -e "${YELLOW}⚙ Inject Admin-web anti-edit → ${path}${RESET}"
+  backup_file "$path"
+
+  if ! grep -q "use Illuminate\\Support\\Facades\\Auth;" "$path"; then
+    sed -i '/^namespace /a use Illuminate\\Support\\Facades\\Auth;' "$path"
+  fi
+
+  awk -v admin_id="$ADMIN_ID" '
+    BEGIN { in_func=0; inserted=0 }
+    /public function update[[:space:]]*\(.*\)/ { print; in_func=1; next }
+    in_func==1 {
+      if (/\{/ && inserted==0) {
+        print
+        print "        // === GreySync Anti Edit Protect (Admin) ==="
+        print "        $auth = \$request->user() ?? Auth::user();"
+        print "        if (!\$auth || (\$auth->id !== \$user->id && \$auth->id != " admin_id ")) {"
+        print "            return redirect()->back()->withErrors([\"error\" => \"😹 Lu Siapa Mau Edit User Lain? Jasa Pasang Anti-Rusuh t.me/greysyncx\"]);"
+        print "        }"
+        inserted=1
+        in_func=0
+        next
+      }
+    }
+    { print }
+  ' "$path" > "$path.tmp" && mv "$path.tmp" "$path"
+}
+
+# ========== PROTECT EXECUTION ==========
 if [[ "$MENU" == "1" ]]; then
   API_CANDIDATES=(
     "/var/www/pterodactyl/app/Http/Controllers/Api/Application/Users/UserController.php"
     "/var/www/pterodactyl/app/Http/Controllers/Api/Users/UserController.php"
     "/var/www/pterodactyl/app/Http/Controllers/Api/Application/UserController.php"
   )
-
   ADMIN_CANDIDATES=(
     "/var/www/pterodactyl/app/Http/Controllers/Admin/UserController.php"
     "/var/www/pterodactyl/app/Http/Controllers/Admin/Users/UserController.php"
@@ -52,94 +127,27 @@ if [[ "$MENU" == "1" ]]; then
 
   PATCHED=()
 
-  backup_file() {
-    local f="$1"
-    [[ -f "$f" ]] && cp "$f" "$BACKUP_DIR/$(basename "$f").$(date +%F-%H%M%S).bak"
-  }
-
-  inject_api_protect() {
-    local path="$1"
-    echo -e "${YELLOW}⚙ Inject API anti-edit → ${path}${RESET}"
-    backup_file "$path"
-
-    if ! grep -q "use Illuminate\\Support\\Facades\\Auth;" "$path"; then
-      sed -i '/^namespace /a use Illuminate\\Support\\Facades\\Auth;' "$path"
-    fi
-
-    awk -v admin_id="$ADMIN_ID" '
-      BEGIN { in_func=0; inserted=0 }
-      /public function update[[:space:]]*\(.*\)/ { print; in_func=1; next }
-      in_func==1 {
-        if (/\{/ && inserted==0) {
-          print
-          print "        // === GreySync Anti Edit Protect (API) ==="
-          print "        $auth = $request->user() ?? Auth::user();"
-          print "        if (!\$auth || (\$auth->id !== \$user->id && \$auth->id != " admin_id ")) {"
-          print "            return response()->json([\"error\" => \"😹 Lu Siapa Mau Edit User Lain? Jasa Pasang Anti-Rusuh t.me/greysyncx\"], 403);"
-          print "        }"
-          inserted=1
-          in_func=0
-          next
-        }
-      }
-      { print }
-    ' "$path" > "$path.tmp" && mv "$path.tmp" "$path"
-
-    PATCHED+=("$path")
-  }
-
-  inject_admin_protect() {
-    local path="$1"
-    echo -e "${YELLOW}⚙ Inject Admin-web anti-edit → ${path}${RESET}"
-    backup_file "$path"
-
-    if ! grep -q "use Illuminate\\Support\\Facades\\Auth;" "$path"; then
-      sed -i '/^namespace /a use Illuminate\\Support\\Facades\\Auth;' "$path"
-    fi
-
-    awk -v admin_id="$ADMIN_ID" '
-      BEGIN { in_func=0; inserted=0 }
-      /public function update[[:space:]]*\(.*\)/ { print; in_func=1; next }
-      in_func==1 {
-        if (/\{/ && inserted==0) {
-          print
-          print "        // === GreySync Anti Edit Protect (Admin) ==="
-          print "        $auth = \$request->user() ?? Auth::user();"
-          print "        if (!\$auth || (\$auth->id !== \$user->id && \$auth->id != " admin_id ")) {"
-          print "            return redirect()->back()->withErrors([\"error\" => \"😹 Lu Siapa Mau Edit User Lain? Jasa Pasang Anti-Rusuh t.me/greysyncx\"]);"
-          print "        }"
-          inserted=1
-          in_func=0
-          next
-        }
-      }
-      { print }
-    ' "$path" > "$path.tmp" && mv "$path.tmp" "$path"
-
-    PATCHED+=("$path")
-  }
-
-  # Detect API UserController
   for p in "${API_CANDIDATES[@]}"; do
     if [[ -f "$p" ]]; then
       echo -e "${GREEN}✔ Found API UserController:${RESET} $p"
       inject_api_protect "$p"
+      PATCHED+=("$p")
       break
     fi
   done
 
-  # Detect Admin UserController
   for p in "${ADMIN_CANDIDATES[@]}"; do
     if [[ -f "$p" ]]; then
       echo -e "${GREEN}✔ Found Admin UserController:${RESET} $p"
       inject_admin_protect "$p"
+      PATCHED+=("$p")
       break
     fi
   done
 
-  # Protect Panel (Nodes, Nests, Settings, Location)
   ADMIN_PANEL_DIR="/var/www/pterodactyl/app/Http/Controllers/Admin"
   panel_targets=("Nodes/NodeController.php" "Nests/NestController.php" "Settings/IndexController.php" "LocationController.php")
+
   for t in "${panel_targets[@]}"; do
     full="$ADMIN_PANEL_DIR/$t"
     if [[ -f "$full" ]]; then
