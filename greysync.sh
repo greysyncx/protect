@@ -6,8 +6,14 @@ CYAN="\033[1;36m"
 YELLOW="\033[1;33m"
 RESET="\033[0m"
 BOLD="\033[1m"
-VERSION="1.6"
+VERSION="1.5"
+
 ADMIN_ID_ARG="$1"
+AUTO_MODE=0
+
+if [[ "$ADMIN_ID_ARG" =~ ^[0-9]+$ ]]; then
+    AUTO_MODE=1
+fi
 
 clear
 echo -e "${CYAN}${BOLD}"
@@ -17,15 +23,17 @@ echo "║                    Version $VERSION                  ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
 
-echo -e "${YELLOW}[1]${RESET} Pasang Protect & Build Panel"
-echo -e "${YELLOW}[2]${RESET} Restore dari Backup Terakhir"
-echo -e "${YELLOW}[3]${RESET} Pasang Protect Admin"
-read -p "$(echo -e "${CYAN}Pilih opsi [1/2/3]: ${RESET}")" OPSI
-
-if [ -n "$ADMIN_ID_ARG" ]; then
+if [ "$AUTO_MODE" -eq 1 ]; then
+    OPSI=1
     ADMIN_ID="$ADMIN_ID_ARG"
-    echo -e "${YELLOW}⚙️ Menggunakan ID Admin dari bot: ${GREEN}${ADMIN_ID}${RESET}"
+    echo -e "${YELLOW}⚙️ Mode otomatis aktif.${RESET}"
+    echo -e "${GREEN}➡ Menjalankan instalasi otomatis untuk Admin ID: ${ADMIN_ID}${RESET}"
 else
+    echo -e "${YELLOW}[1]${RESET} Pasang Protect & Build Panel"
+    echo -e "${YELLOW}[2]${RESET} Restore dari Backup Terakhir"
+    echo -e "${YELLOW}[3]${RESET} Pasang Protect Admin"
+    read -p "$(echo -e "${CYAN}Pilih opsi [1/2/3]: ${RESET}")" OPSI
+
     read -p "$(echo -e "${CYAN}👤 Masukkan User ID Admin Utama (contoh: 1): ${RESET}")" ADMIN_ID
 fi
 
@@ -39,15 +47,14 @@ CONTROLLER_USER="/var/www/pterodactyl/app/Http/Controllers/Admin/UserController.
 SERVICE_SERVER="/var/www/pterodactyl/app/Services/Servers/ServerDeletionService.php"
 API_SERVER_CONTROLLER="/var/www/pterodactyl/app/Http/Controllers/Api/Client/Servers/ServerController.php"
 BACKUP_DIR="backup_greysyncx"
-
 mkdir -p "$BACKUP_DIR"
 
 if [ "$OPSI" = "1" ]; then
     echo -e "${YELLOW}➤ Membuat backup sebelum patch...${RESET}"
     DATE_TAG=$(date +%F-%H%M%S)
-    cp "$CONTROLLER_USER" "$BACKUP_DIR/UserController.$DATE_TAG.bak"
-    cp "$SERVICE_SERVER" "$BACKUP_DIR/ServerDeletionService.$DATE_TAG.bak"
-    cp "$API_SERVER_CONTROLLER" "$BACKUP_DIR/ServerControllerAPI.$DATE_TAG.bak"
+    cp "$CONTROLLER_USER" "$BACKUP_DIR/UserController.$DATE_TAG.bak" 2>/dev/null || true
+    cp "$SERVICE_SERVER" "$BACKUP_DIR/ServerDeletionService.$DATE_TAG.bak" 2>/dev/null || true
+    cp "$API_SERVER_CONTROLLER" "$BACKUP_DIR/ServerControllerAPI.$DATE_TAG.bak" 2>/dev/null || true
 
     # === Protect Delete User ===
     echo -e "${YELLOW}➤ Menambahkan Protect Delete User...${RESET}"
@@ -105,7 +112,6 @@ elif [ "$OPSI" = "2" ]; then
         echo -e "${RED}❌ Tidak ada backup ditemukan.${RESET}"
         exit 1
     fi
-
     for FILE in "$BACKUP_DIR"/*.bak; do
         BASE=$(basename "$FILE" | cut -d'.' -f1)
         case "$BASE" in
@@ -117,7 +123,6 @@ elif [ "$OPSI" = "2" ]; then
         cp "$FILE" "$TARGET"
         echo -e "${GREEN}✔ Dipulihkan: $BASE${RESET}"
     done
-
     echo -e "${GREEN}✅ Semua file berhasil dikembalikan dari backup terbaru.${RESET}"
 
 elif [ "$OPSI" = "3" ]; then
