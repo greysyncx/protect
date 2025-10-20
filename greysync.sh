@@ -6,13 +6,14 @@ CYAN="\033[1;36m"
 YELLOW="\033[1;33m"
 RESET="\033[0m"
 BOLD="\033[1m"
-VERSION="1.5"
+VERSION="1.6"
+ADMIN_ID_ARG="$1"
 
 clear
 echo -e "${CYAN}${BOLD}"
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║         GreySync Protect + Panel Grey             ║"
-echo "║                    Version $VERSION                       ║"
+echo "║         GreySync Protect + Panel Grey                ║"
+echo "║                    Version $VERSION                  ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
 
@@ -21,6 +22,19 @@ echo -e "${YELLOW}[2]${RESET} Restore dari Backup Terakhir"
 echo -e "${YELLOW}[3]${RESET} Pasang Protect Admin"
 read -p "$(echo -e "${CYAN}Pilih opsi [1/2/3]: ${RESET}")" OPSI
 
+if [ -n "$ADMIN_ID_ARG" ]; then
+    ADMIN_ID="$ADMIN_ID_ARG"
+    echo -e "${YELLOW}⚙️ Menggunakan ID Admin dari bot: ${GREEN}${ADMIN_ID}${RESET}"
+else
+    read -p "$(echo -e "${CYAN}👤 Masukkan User ID Admin Utama (contoh: 1): ${RESET}")" ADMIN_ID
+fi
+
+if [ -z "$ADMIN_ID" ]; then
+    echo -e "${RED}❌ Admin ID tidak boleh kosong.${RESET}"
+    exit 1
+fi
+
+# ========== FILE PENTING ==========
 CONTROLLER_USER="/var/www/pterodactyl/app/Http/Controllers/Admin/UserController.php"
 SERVICE_SERVER="/var/www/pterodactyl/app/Services/Servers/ServerDeletionService.php"
 API_SERVER_CONTROLLER="/var/www/pterodactyl/app/Http/Controllers/Api/Client/Servers/ServerController.php"
@@ -29,8 +43,6 @@ BACKUP_DIR="backup_greysyncx"
 mkdir -p "$BACKUP_DIR"
 
 if [ "$OPSI" = "1" ]; then
-    read -p "$(echo -e "${CYAN}👤 Masukkan User ID Admin Utama (contoh: 1): ${RESET}")" ADMIN_ID
-
     echo -e "${YELLOW}➤ Membuat backup sebelum patch...${RESET}"
     DATE_TAG=$(date +%F-%H%M%S)
     cp "$CONTROLLER_USER" "$BACKUP_DIR/UserController.$DATE_TAG.bak"
@@ -88,10 +100,13 @@ if [ "$OPSI" = "1" ]; then
 
 elif [ "$OPSI" = "2" ]; then
     echo -e "${CYAN}♻ Mengembalikan semua file dari backup terbaru...${RESET}"
-    LATEST=$(ls -t "$BACKUP_DIR"/*.bak | head -n 1 | sed 's/.*\.\(.*\)\.bak/\1/')
-    [ -z "$LATEST" ] && { echo -e "${RED}❌ Tidak ada backup ditemukan.${RESET}"; exit 1; }
+    LATEST=$(ls -t "$BACKUP_DIR"/*.bak 2>/dev/null | head -n 1)
+    if [ -z "$LATEST" ]; then
+        echo -e "${RED}❌ Tidak ada backup ditemukan.${RESET}"
+        exit 1
+    fi
 
-    for FILE in "$BACKUP_DIR"/*"$LATEST"*.bak; do
+    for FILE in "$BACKUP_DIR"/*.bak; do
         BASE=$(basename "$FILE" | cut -d'.' -f1)
         case "$BASE" in
             UserController) TARGET="$CONTROLLER_USER" ;;
@@ -106,7 +121,8 @@ elif [ "$OPSI" = "2" ]; then
     echo -e "${GREEN}✅ Semua file berhasil dikembalikan dari backup terbaru.${RESET}"
 
 elif [ "$OPSI" = "3" ]; then
-    bash <(curl -s https://raw.githubusercontent.com/greysyncx/protect/main/greyz.sh)
+    echo -e "${YELLOW}➡ Menjalankan GreyZ Admin Protect...${RESET}"
+    bash <(curl -s https://raw.githubusercontent.com/greysyncx/protect/main/greyz.sh) "$ADMIN_ID"
 else
     echo -e "${RED}❌ Opsi tidak valid.${RESET}"
 fi
