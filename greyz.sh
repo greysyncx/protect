@@ -2,89 +2,205 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# ===== AUTO MODE (BOT) =====
+MODE_ARG="${1:-}"
+ADMIN_ARG="${2:-}"
+AUTO_MODE=0
+MENU=""
+ADMIN_ID=""
+
+if [[ "$MODE_ARG" =~ ^[12]$ ]]; then
+  AUTO_MODE=1
+  MENU="$MODE_ARG"
+  ADMIN_ID="$ADMIN_ARG"
+fi
+
+# ===== COLOR =====
 RED="\033[1;31m"
 GREEN="\033[1;32m"
 CYAN="\033[1;36m"
 YELLOW="\033[1;33m"
+WHITE="\033[1;37m"
 RESET="\033[0m"
 
+# ===== CONFIG =====
 VERSION="1.5"
 BACKUP_DIR="/root/greysync_backupsx"
 mkdir -p "$BACKUP_DIR"
 
-MODE="${1:-}"
-ADMIN_ID="${2:-}"
+clear
 
-AUTO_MODE=0
-[[ "$MODE" =~ ^[12]$ ]] && AUTO_MODE=1
+# ===== HEADER =====
+echo -e "${CYAN}"
+echo "╔════════════════════════════════════════════════════════════╗"
+echo "║                                                            ║"
+echo "║        ██████╗ ██████╗ ███████╗██╗   ██╗                   ║"
+echo "║       ██╔════╝ ██╔══██╗██╔════╝╚██╗ ██╔╝                   ║"
+echo "║       ██║  ███╗██████╔╝█████╗   ╚████╔╝                    ║"
+echo "║       ██║   ██║██╔══██╗██╔══╝    ╚██╔╝                     ║"
+echo "║       ╚██████╔╝██║  ██║███████╗   ██║                      ║"
+echo "║        ╚═════╝ ╚═╝  ╚═╝╚══════╝   ╚═╝                      ║"
+echo "║                                                            ║"
+echo "║        GreySync Protect • Auto Mode                        ║"
+echo "║        Version : v${VERSION}                                ║"
+echo "║                                                            ║"
+echo "╚════════════════════════════════════════════════════════════╝"
+echo -e "${RESET}"
+
+# ===== MENU =====
+echo
+echo -e "${WHITE}Silakan pilih mode operasi:${RESET}"
+echo
+echo -e "  ${YELLOW}[1]${RESET} Pasang Proteksi GreyZ (Anti Edit & Anti Intip)"
+echo -e "  ${YELLOW}[2]${RESET} Restore File dari Backup Terakhir"
+echo
 
 if [[ "$AUTO_MODE" -eq 0 ]]; then
-  clear
-  echo -e "${CYAN}GreySync Admin Protect v$VERSION${RESET}"
+  read -rp "$(echo -e "${CYAN}➤ Pilihan Anda [1/2]: ${RESET}")" MENU
 fi
+echo
 
-if [[ -z "$MODE" || ! "$MODE" =~ ^[12]$ ]]; then
-  echo -e "${RED}❌ Mode tidak valid${RESET}"
-  exit 1
-fi
+# ============= MODE 1 ================
+if [[ "$MENU" == "1" ]]; then
 
-if [[ "$MODE" == "1" && ! "$ADMIN_ID" =~ ^[0-9]+$ ]]; then
-  echo -e "${RED}❌ Admin ID wajib${RESET}"
-  exit 1
-fi
+  echo -e "${WHITE}Mode      :${RESET} Instalasi Proteksi"
+  echo -e "${WHITE}Backup Dir:${RESET} $BACKUP_DIR"
+  echo
 
-backup() {
-  [[ -f "$1" ]] && cp "$1" "$BACKUP_DIR/$(basename "$1").$(date +%F-%H%M%S).bak"
-}
+  if [[ -z "$ADMIN_ID" ]]; then
+    read -rp "👤 Masukkan ID Admin Utama (contoh: 1): " ADMIN_ID
+  fi
 
-patch_api() {
-  backup "$1"
-  grep -q "Facades\\Auth" "$1" || sed -i '/^namespace/a use Illuminate\\Support\\Facades\\Auth;' "$1"
-  awk -v admin="$ADMIN_ID" '
-  /public function update/ {print;f=1;next}
-  f&&/\{/{
-    print
-    print "        $a=$request->user()??Auth::user();"
-    print "        if(!$a||($a->id!=$user->id&&$a->id!=" admin ")) return response()->json([],403);"
-    f=0;next
-  }{print}' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
-}
+  if [[ -z "$ADMIN_ID" ]]; then
+    echo -e "${RED}❌ Admin ID tidak boleh kosong.${RESET}"
+    exit 1
+  fi
 
-patch_admin() {
-  backup "$1"
-  grep -q "Facades\\Auth" "$1" || sed -i '/^namespace/a use Illuminate\\Support\\Facades\\Auth;' "$1"
-  awk -v admin="$ADMIN_ID" '
-  /public function update/ {print;f=1;next}
-  f&&/\{/{
-    print
-    print "        $a=$request->user()??Auth::user();"
-    print "        if(!$a||($a->id!=$user->id&&$a->id!=" admin ")) return back()->withErrors([\"error\"=>\"Unauthorized\"]);"
-    f=0;next
-  }{print}' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
-}
+  echo
+  echo -e "${CYAN}⏳ Memulai proses proteksi...${RESET}"
+  echo
 
-if [[ "$MODE" == "1" ]]; then
-  for p in \
-    /var/www/pterodactyl/app/Http/Controllers/Api/Application/Users/UserController.php \
-    /var/www/pterodactyl/app/Http/Controllers/Api/Users/UserController.php; do
-    [[ -f "$p" ]] && patch_api "$p" && break
+  API_CANDIDATES=(
+    "/var/www/pterodactyl/app/Http/Controllers/Api/Application/Users/UserController.php"
+    "/var/www/pterodactyl/app/Http/Controllers/Api/Users/UserController.php"
+    "/var/www/pterodactyl/app/Http/Controllers/Api/Application/UserController.php"
+  )
+
+  ADMIN_CANDIDATES=(
+    "/var/www/pterodactyl/app/Http/Controllers/Admin/UserController.php"
+    "/var/www/pterodactyl/app/Http/Controllers/Admin/Users/UserController.php"
+    "/var/www/pterodactyl/app/Http/Controllers/Admin/UsersController.php"
+    "/var/www/pterodactyl/app/Http/Controllers/Admin/UserManagementController.php"
+  )
+
+  PATCHED=()
+
+  backup_file() {
+    local f="$1"
+    [[ -f "$f" ]] && cp "$f" "$BACKUP_DIR/$(basename "$f").$(date +%F-%H%M%S).bak"
+  }
+
+  inject_api_protect() {
+    local path="$1"
+    echo -e "${YELLOW}⚙ Patch API UserController${RESET}"
+    echo -e "   └─ ${WHITE}$path${RESET}"
+    backup_file "$path"
+
+    if ! grep -q "use Illuminate\\Support\\Facades\\Auth;" "$path"; then
+      sed -i '/^namespace /a use Illuminate\\Support\\Facades\\Auth;' "$path"
+    fi
+
+    awk -v admin_id="$ADMIN_ID" '
+      BEGIN { in_func=0; inserted=0 }
+      /public function update[[:space:]]*\(.*\)/ { print; in_func=1; next }
+      in_func==1 && /\{/ && inserted==0 {
+        print
+        print "        // === GreySync Anti Edit Protect (API) ==="
+        print "        $auth = $request->user() ?? Auth::user();"
+        print "        if (!\\$auth || (\\$auth->id !== \\$user->id && \\$auth->id != " admin_id ")) {"
+        print "            return response()->json([\"error\" => \"Unauthorized user modification\"], 403);"
+        print "        }"
+        inserted=1
+        in_func=0
+        next
+      }
+      { print }
+    ' "$path" > "$path.tmp" && mv "$path.tmp" "$path"
+
+    PATCHED+=("$path")
+  }
+
+  inject_admin_protect() {
+    local path="$1"
+    echo -e "${YELLOW}⚙ Patch Admin UserController${RESET}"
+    echo -e "   └─ ${WHITE}$path${RESET}"
+    backup_file "$path"
+
+    if ! grep -q "use Illuminate\\Support\\Facades\\Auth;" "$path"; then
+      sed -i '/^namespace /a use Illuminate\\Support\\Facades\\Auth;' "$path"
+    fi
+
+    awk -v admin_id="$ADMIN_ID" '
+      BEGIN { in_func=0; inserted=0 }
+      /public function update[[:space:]]*\(.*\)/ { print; in_func=1; next }
+      in_func==1 && /\{/ && inserted==0 {
+        print
+        print "        // === GreySync Anti Edit Protect (Admin) ==="
+        print "        $auth = \\$request->user() ?? Auth::user();"
+        print "        if (!\\$auth || (\\$auth->id !== \\$user->id && \\$auth->id != " admin_id ")) {"
+        print "            return redirect()->back()->withErrors([\"error\" => \"Unauthorized access\" ]);"
+        print "        }"
+        inserted=1
+        in_func=0
+        next
+      }
+      { print }
+    ' "$path" > "$path.tmp" && mv "$path.tmp" "$path"
+
+    PATCHED+=("$path")
+  }
+
+  for p in "${API_CANDIDATES[@]}"; do
+    [[ -f "$p" ]] && inject_api_protect "$p" && break
   done
 
-  for p in \
-    /var/www/pterodactyl/app/Http/Controllers/Admin/UserController.php \
-    /var/www/pterodactyl/app/Http/Controllers/Admin/Users/UserController.php; do
-    [[ -f "$p" ]] && patch_admin "$p" && break
+  for p in "${ADMIN_CANDIDATES[@]}"; do
+    [[ -f "$p" ]] && inject_admin_protect "$p" && break
   done
 
-  echo -e "${GREEN}✅ Admin Protect terpasang${RESET}"
-  exit 0
-fi
+  echo
+  if [[ ${#PATCHED[@]} -eq 0 ]]; then
+    echo -e "${YELLOW}⚠ Tidak ada file yang berhasil dipatch.${RESET}"
+  else
+    echo -e "${GREEN}✅ Proteksi berhasil diterapkan:${RESET}"
+    for f in "${PATCHED[@]}"; do
+      echo -e "   • ${WHITE}$f${RESET}"
+    done
+  fi
 
-if [[ "$MODE" == "2" ]]; then
+# ============ MODE 2 ======================
+elif [[ "$MENU" == "2" ]]; then
+
+  echo -e "${CYAN}🔄 Memulihkan file dari backup terbaru...${RESET}"
+  echo
+
   shopt -s nullglob
-  for b in "$BACKUP_DIR"/*.bak; do
-    n=$(basename "$b" | sed 's/\.[0-9-]*\.bak$//')
-    find /var/www/pterodactyl/app/Http/Controllers -name "$n" -exec cp "$b" {} \; 2>/dev/null || true
+  LATEST_FILES=$(ls -1t "$BACKUP_DIR"/*.bak 2>/dev/null || true)
+
+  if [[ -z "$LATEST_FILES" ]]; then
+    echo -e "${RED}❌ Backup tidak ditemukan.${RESET}"
+    exit 1
+  fi
+
+  for bak in $LATEST_FILES; do
+    fname=$(basename "$bak" | sed 's/\.[0-9-]*\.bak$//')
+    find /var/www/pterodactyl/app/Http/Controllers -type f -name "$fname" -exec cp "$bak" {} \; 2>/dev/null || true
   done
-  echo -e "${GREEN}✅ Restore Admin Protect selesai${RESET}"
+
+  echo -e "${GREEN}✅ Restore selesai.${RESET}"
+  echo -e "${WHITE}📁 Backup:${RESET} $BACKUP_DIR"
+
+else
+  echo -e "${RED}❌ Pilihan tidak valid.${RESET}"
+  exit 1
 fi
