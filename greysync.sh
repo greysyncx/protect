@@ -19,7 +19,6 @@ VIEW_DIR="/var/www/pterodactyl/resources/views/admin"
 mkdir -p "$BACKUP_DIR"
 
 clear
-
 # ===== HEADER =====
 echo -e "${CYAN}${BOLD}"
 echo "╔══════════════════════════════════════════════════════╗"
@@ -29,19 +28,23 @@ echo "║                 Version $VERSION                     ║"
 echo "║                                                      ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
+# ===== SINKRON BOT MODE =====
+OPSI="$1"
+ADMIN_ID="$2"
 
-# ===== MENU =====
-echo
-echo -e "${YELLOW}[1]${RESET} Pasang Protect & Build Panel"
-echo -e "${YELLOW}[2]${RESET} Restore dari Backup Terakhir"
-echo -e "${YELLOW}[3]${RESET} Pasang Protect Admin"
-echo
-read -p "$(echo -e "${CYAN}➤ Pilih opsi [1/2/3]: ${RESET}")" OPSI
-echo
-
+if [ -z "$OPSI" ]; then
+  echo -e "${RED}❌ Mode tidak diberikan. Gunakan: $0 <1|2> [adminId]${RESET}"
+  exit 1
+fi
 # ================== MODE 1 ====================
 if [ "$OPSI" = "1" ]; then
-    read -p "$(echo -e "${CYAN}👤 Masukkan User ID Admin Utama (contoh: 1): ${RESET}")" ADMIN_ID
+
+    if [ -z "$ADMIN_ID" ]; then
+      echo -e "${RED}❌ ADMIN_ID wajib untuk mode install (mode 1).${RESET}"
+      exit 1
+    fi
+
+    echo -e "${CYAN}➤ Mode Install Protect | Admin ID: ${ADMIN_ID}${RESET}"
 
     echo -e "${YELLOW}➤ Membuat backup sebelum patch...${RESET}"
     DATE_TAG=$(date +%F-%H%M%S)
@@ -67,7 +70,6 @@ if [ "$OPSI" = "1" ]; then
     else
         echo -e "${YELLOW}⚠ UserController tidak ditemukan, lompat Protect Delete User.${RESET}"
     fi
-
     # ===== Protect Delete Server =====
     if [ -f "$SERVICE_SERVER" ]; then
         echo -e "${YELLOW}➤ Menambahkan Protect Delete Server...${RESET}"
@@ -90,7 +92,6 @@ if [ "$OPSI" = "1" ]; then
     else
         echo -e "${YELLOW}⚠ ServerDeletionService tidak ditemukan, lompat Protect Delete Server.${RESET}"
     fi
-
     # ===== Anti Intip Server (API) =====
     if [ -f "$API_SERVER_CONTROLLER" ]; then
         echo -e "${YELLOW}➤ Menambahkan Anti Intip Server...${RESET}"
@@ -110,19 +111,16 @@ if [ "$OPSI" = "1" ]; then
     else
         echo -e "${YELLOW}⚠ API ServerController tidak ditemukan, lompat Anti Intip API.${RESET}"
     fi
-
     # ===== Proteksi Blade View =====
     VIEW_FILE="$VIEW_DIR/servers/view/index.blade.php"
     if [ -f "$VIEW_FILE" ]; then
         echo -e "${YELLOW}➤ Menambahkan Proteksi View Detail Server (Blade)...${RESET}"
         cp "$VIEW_FILE" "$BACKUP_DIR/view_index_$(date +%F-%H%M%S).bak"
 
-        # Bersihkan insert sebelumnya
         sed -i '/Lu siapa mau intip detail server orang/d' "$VIEW_FILE" 2>/dev/null || true
         sed -i '/auth()->user();/d' "$VIEW_FILE" 2>/dev/null || true
         sed -i '/abort(403/d' "$VIEW_FILE" 2>/dev/null || true
 
-        # Tambahkan guard baru
         awk -v admin_id="$ADMIN_ID" '
         NR==1 {
             print "@php"
@@ -141,9 +139,10 @@ if [ "$OPSI" = "1" ]; then
     fi
 
     echo -e "${GREEN}🎉 Protect v$VERSION berhasil dipasang.${RESET}"
-
+    exit 0
 # ================= MODE 2 ======================
 elif [ "$OPSI" = "2" ]; then
+
     echo -e "${CYAN}♻ Mengembalikan semua file dari backup terbaru...${RESET}"
     LATEST=$(ls -t "$BACKUP_DIR"/*.bak 2>/dev/null | head -n 1 | sed 's/.*\.\(.*\)\.bak/\1/')
     [ -z "$LATEST" ] && { echo -e "${RED}❌ Tidak ada backup ditemukan.${RESET}"; exit 1; }
@@ -161,11 +160,9 @@ elif [ "$OPSI" = "2" ]; then
     done
 
     echo -e "${GREEN}✅ Semua file berhasil dikembalikan dari backup terbaru.${RESET}"
-
-# ================== MODE 3 ======================
-elif [ "$OPSI" = "3" ]; then
-    bash <(curl -s https://raw.githubusercontent.com/greysyncx/protect/main/greyz.sh)
+    exit 0
 
 else
-    echo -e "${RED}❌ Opsi tidak valid.${RESET}"
+    echo -e "${RED}❌ Opsi tidak valid: $OPSI (gunakan 1 atau 2)${RESET}"
+    exit 1
 fi
