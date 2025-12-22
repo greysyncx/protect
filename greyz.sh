@@ -11,29 +11,24 @@ WHITE="\033[1;37m"
 RESET="\033[0m"
 
 # ===== CONFIG =====
-VERSION="1.5"
+VERSION="1.6"
 BACKUP_DIR="/root/greysync_backupsx"
 mkdir -p "$BACKUP_DIR"
 
-clear
-# ===== HEADER =====
+# Clear only if interactive
+[[ -t 1 ]] && clear
+
+# ===== HEADER (interactive only) =====
+if [[ -z "${1:-}" ]]; then
 echo -e "${CYAN}"
 echo "╔════════════════════════════════════════════════════════════╗"
-echo "║                                                            ║"
-echo "║        ██████╗ ██████╗ ███████╗██╗   ██╗                   ║"
-echo "║       ██╔════╝ ██╔══██╗██╔════╝╚██╗ ██╔╝                   ║"
-echo "║       ██║  ███╗██████╔╝█████╗   ╚████╔╝                    ║"
-echo "║       ██║   ██║██╔══██╗██╔══╝    ╚██╔╝                     ║"
-echo "║       ╚██████╔╝██║  ██║███████╗   ██║                      ║"
-echo "║        ╚═════╝ ╚═╝  ╚═╝╚══════╝   ╚═╝                      ║"
-echo "║                                                            ║"
-echo "║        GreySync Protect • Auto Mode                        ║"
+echo "║        GreyZ Admin Protect • Auto Mode                     ║"
 echo "║        Version : v${VERSION}                                ║"
-echo "║                                                            ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
+fi
 
-# ===== SINKRON BOT MODE =====
+# ===== BOT MODE =====
 MODE="${1:-}"
 ADMIN_ID="${2:-}"
 
@@ -41,7 +36,8 @@ if [[ -z "$MODE" ]]; then
   echo -e "${RED}❌ Mode tidak diberikan. Gunakan: $0 <1|2> [adminId]${RESET}"
   exit 1
 fi
-# ============= MODE 1 ================
+
+# ================= MODE 1 : INSTALL =================
 if [[ "$MODE" == "1" ]]; then
 
   if [[ -z "$ADMIN_ID" ]]; then
@@ -49,12 +45,8 @@ if [[ "$MODE" == "1" ]]; then
     exit 1
   fi
 
-  echo -e "${WHITE}Mode      :${RESET} Instalasi Proteksi"
-  echo -e "${WHITE}Backup Dir:${RESET} $BACKUP_DIR"
-  echo -e "${WHITE}Admin ID  :${RESET} $ADMIN_ID"
-  echo
-
-  echo -e "${CYAN}⏳ Memulai proses proteksi...${RESET}"
+  echo -e "${CYAN}➤ GreyZ Admin Protect | Admin ID: ${ADMIN_ID}${RESET}"
+  echo -e "${CYAN}⏳ Memulai patch admin controller...${RESET}"
   echo
 
   API_CANDIDATES=(
@@ -79,8 +71,7 @@ if [[ "$MODE" == "1" ]]; then
 
   inject_api_protect() {
     local path="$1"
-    echo -e "${YELLOW}⚙ Patch API UserController${RESET}"
-    echo -e "   └─ ${WHITE}$path${RESET}"
+    echo -e "${YELLOW}⚙ Patch API → ${WHITE}$path${RESET}"
     backup_file "$path"
 
     if ! grep -q "use Illuminate\\Support\\Facades\\Auth;" "$path"; then
@@ -92,10 +83,10 @@ if [[ "$MODE" == "1" ]]; then
       /public function update[[:space:]]*\(.*\)/ { print; in_func=1; next }
       in_func==1 && /\{/ && inserted==0 {
         print
-        print "        // === GreySync Anti Edit Protect (API) ==="
+        print "        // === GreyZ Anti Edit Protect (API) ==="
         print "        $auth = $request->user() ?? Auth::user();"
         print "        if (!\\$auth || (\\$auth->id !== \\$user->id && \\$auth->id != " admin_id ")) {"
-        print "            return response()->json([\"error\" => \"Unauthorized user modification\"], 403);"
+        print "            return response()->json([\"error\" => \"Unauthorized modification\"], 403);"
         print "        }"
         inserted=1
         in_func=0
@@ -109,8 +100,7 @@ if [[ "$MODE" == "1" ]]; then
 
   inject_admin_protect() {
     local path="$1"
-    echo -e "${YELLOW}⚙ Patch Admin UserController${RESET}"
-    echo -e "   └─ ${WHITE}$path${RESET}"
+    echo -e "${YELLOW}⚙ Patch Admin → ${WHITE}$path${RESET}"
     backup_file "$path"
 
     if ! grep -q "use Illuminate\\Support\\Facades\\Auth;" "$path"; then
@@ -122,7 +112,7 @@ if [[ "$MODE" == "1" ]]; then
       /public function update[[:space:]]*\(.*\)/ { print; in_func=1; next }
       in_func==1 && /\{/ && inserted==0 {
         print
-        print "        // === GreySync Anti Edit Protect (Admin) ==="
+        print "        // === GreyZ Anti Edit Protect (Admin) ==="
         print "        $auth = \\$request->user() ?? Auth::user();"
         print "        if (!\\$auth || (\\$auth->id !== \\$user->id && \\$auth->id != " admin_id ")) {"
         print "            return redirect()->back()->withErrors([\"error\" => \"Unauthorized access\" ]);"
@@ -149,18 +139,17 @@ if [[ "$MODE" == "1" ]]; then
   if [[ ${#PATCHED[@]} -eq 0 ]]; then
     echo -e "${YELLOW}⚠ Tidak ada file yang berhasil dipatch.${RESET}"
   else
-    echo -e "${GREEN}✅ Proteksi berhasil diterapkan:${RESET}"
+    echo -e "${GREEN}✅ GreyZ Admin Protect berhasil:${RESET}"
     for f in "${PATCHED[@]}"; do
       echo -e "   • ${WHITE}$f${RESET}"
     done
   fi
   exit 0
-# ============ MODE 2 ======================
+
+# ================= MODE 2 : RESTORE =================
 elif [[ "$MODE" == "2" ]]; then
 
-  echo -e "${CYAN}🔄 Memulihkan file dari backup terbaru...${RESET}"
-  echo
-
+  echo -e "${CYAN}🔄 Restore dari backup GreyZ...${RESET}"
   shopt -s nullglob
   LATEST_FILES=$(ls -1t "$BACKUP_DIR"/*.bak 2>/dev/null || true)
 
@@ -171,10 +160,11 @@ elif [[ "$MODE" == "2" ]]; then
 
   for bak in $LATEST_FILES; do
     fname=$(basename "$bak" | sed 's/\.[0-9-]*\.bak$//')
-    find /var/www/pterodactyl/app/Http/Controllers -type f -name "$fname" -exec cp "$bak" {} \; 2>/dev/null || true
+    find /var/www/pterodactyl/app/Http/Controllers -type f -name "$fname" \
+      -exec cp "$bak" {} \; 2>/dev/null || true
   done
 
-  echo -e "${GREEN}✅ Restore selesai.${RESET}"
+  echo -e "${GREEN}✅ Restore GreyZ selesai.${RESET}"
   echo -e "${WHITE}📁 Backup:${RESET} $BACKUP_DIR"
   exit 0
 
