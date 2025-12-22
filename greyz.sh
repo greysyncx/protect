@@ -16,7 +16,6 @@ BACKUP_DIR="/root/greysync_backupsx"
 mkdir -p "$BACKUP_DIR"
 
 clear
-
 # ===== HEADER =====
 echo -e "${CYAN}"
 echo "╔════════════════════════════════════════════════════════════╗"
@@ -34,30 +33,27 @@ echo "║                                                            ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
 
-# ===== MENU =====
-echo
-echo -e "${WHITE}Silakan pilih mode operasi:${RESET}"
-echo
-echo -e "  ${YELLOW}[1]${RESET} Pasang Proteksi GreyZ (Anti Edit & Anti Intip)"
-echo -e "  ${YELLOW}[2]${RESET} Restore File dari Backup Terakhir"
-echo
-read -rp "$(echo -e "${CYAN}➤ Pilihan Anda [1/2]: ${RESET}")" MENU
-echo
+# ===== SINKRON BOT MODE =====
+MODE="${1:-}"
+ADMIN_ID="${2:-}"
 
+if [[ -z "$MODE" ]]; then
+  echo -e "${RED}❌ Mode tidak diberikan. Gunakan: $0 <1|2> [adminId]${RESET}"
+  exit 1
+fi
 # ============= MODE 1 ================
-if [[ "$MENU" == "1" ]]; then
+if [[ "$MODE" == "1" ]]; then
 
-  echo -e "${WHITE}Mode      :${RESET} Instalasi Proteksi"
-  echo -e "${WHITE}Backup Dir:${RESET} $BACKUP_DIR"
-  echo
-
-  read -rp "👤 Masukkan ID Admin Utama (contoh: 1): " ADMIN_ID
   if [[ -z "$ADMIN_ID" ]]; then
-    echo -e "${RED}❌ Admin ID tidak boleh kosong.${RESET}"
+    echo -e "${RED}❌ Admin ID wajib untuk mode install.${RESET}"
     exit 1
   fi
 
+  echo -e "${WHITE}Mode      :${RESET} Instalasi Proteksi"
+  echo -e "${WHITE}Backup Dir:${RESET} $BACKUP_DIR"
+  echo -e "${WHITE}Admin ID  :${RESET} $ADMIN_ID"
   echo
+
   echo -e "${CYAN}⏳ Memulai proses proteksi...${RESET}"
   echo
 
@@ -158,9 +154,9 @@ if [[ "$MENU" == "1" ]]; then
       echo -e "   • ${WHITE}$f${RESET}"
     done
   fi
-
+  exit 0
 # ============ MODE 2 ======================
-elif [[ "$MENU" == "2" ]]; then
+elif [[ "$MODE" == "2" ]]; then
 
   echo -e "${CYAN}🔄 Memulihkan file dari backup terbaru...${RESET}"
   echo
@@ -180,8 +176,9 @@ elif [[ "$MENU" == "2" ]]; then
 
   echo -e "${GREEN}✅ Restore selesai.${RESET}"
   echo -e "${WHITE}📁 Backup:${RESET} $BACKUP_DIR"
+  exit 0
 
 else
-  echo -e "${RED}❌ Pilihan tidak valid.${RESET}"
+  echo -e "${RED}❌ Mode tidak valid: $MODE (gunakan 1 atau 2)${RESET}"
   exit 1
 fi
