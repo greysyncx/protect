@@ -18,17 +18,22 @@ VIEW_DIR="/var/www/pterodactyl/resources/views/admin"
 
 mkdir -p "$BACKUP_DIR"
 
-clear
-# ===== HEADER =====
-echo -e "${CYAN}${BOLD}"
-echo "╔══════════════════════════════════════════════════════╗"
-echo "║                                                      ║"
-echo "║          GreySync Protect + Panel Grey              ║"
-echo "║                 Version $VERSION                     ║"
-echo "║                                                      ║"
-echo "╚══════════════════════════════════════════════════════╝"
-echo -e "${RESET}"
-# ===== SINKRON BOT MODE =====
+# Clear only if interactive
+[[ -t 1 ]] && clear
+
+# ===== HEADER (interactive only) =====
+if [[ -z "$1" ]]; then
+  echo -e "${CYAN}${BOLD}"
+  echo "╔══════════════════════════════════════════════════════╗"
+  echo "║                                                      ║"
+  echo "║          GreySync Protect + Panel Grey              ║"
+  echo "║                 Version $VERSION                     ║"
+  echo "║                                                      ║"
+  echo "╚══════════════════════════════════════════════════════╝"
+  echo -e "${RESET}"
+fi
+
+# ===== BOT MODE =====
 OPSI="$1"
 ADMIN_ID="$2"
 
@@ -36,7 +41,8 @@ if [ -z "$OPSI" ]; then
   echo -e "${RED}❌ Mode tidak diberikan. Gunakan: $0 <1|2> [adminId]${RESET}"
   exit 1
 fi
-# ================== MODE 1 ====================
+
+# ================== MODE 1 : INSTALL ====================
 if [ "$OPSI" = "1" ]; then
 
     if [ -z "$ADMIN_ID" ]; then
@@ -59,17 +65,16 @@ if [ "$OPSI" = "1" ]; then
         /public function delete\(Request \$request, User \$user\): RedirectResponse/ { print; in_func = 1; next }
         in_func == 1 && /^\s*{/ {
             print
-            print "        if (\$request->user()->id !== " admin_id ") {"
-            print "            throw new DisplayException(\"🤬 Lu siapa mau hapus user lain?\\nJasa Pasang Anti-Rusuh t.me/greysyncx\");"
+            print "        if (\\$request->user()->id !== " admin_id ") {"
+            print "            throw new DisplayException(\"Unauthorized delete user\");"
             print "        }"
             in_func = 0
             next
         }
         { print }' "$CONTROLLER_USER" > "$CONTROLLER_USER.tmp" && mv "$CONTROLLER_USER.tmp" "$CONTROLLER_USER"
         echo -e "${GREEN}✔ Protect Delete User selesai.${RESET}"
-    else
-        echo -e "${YELLOW}⚠ UserController tidak ditemukan, lompat Protect Delete User.${RESET}"
     fi
+
     # ===== Protect Delete Server =====
     if [ -f "$SERVICE_SERVER" ]; then
         echo -e "${YELLOW}➤ Menambahkan Protect Delete Server...${RESET}"
@@ -80,67 +85,68 @@ if [ "$OPSI" = "1" ]; then
         /public function handle\(Server \$server\): void/ { print; in_func = 1; next }
         in_func == 1 && /^\s*{/ {
             print
-            print "        \$user = Auth::user();"
-            print "        if (\$user && \$user->id !== " admin_id ") {"
-            print "            throw new DisplayException(\"🤬 Lu siapa mau hapus server orang?\\nJasa Pasang Anti-Rusuh t.me/greysyncx\");"
+            print "        \\$user = Auth::user();"
+            print "        if (\\$user && \\$user->id !== " admin_id ") {"
+            print "            throw new DisplayException(\"Unauthorized delete server\");"
             print "        }"
             in_func = 0
             next
         }
         { print }' "$SERVICE_SERVER" > "$SERVICE_SERVER.tmp" && mv "$SERVICE_SERVER.tmp" "$SERVICE_SERVER"
         echo -e "${GREEN}✔ Protect Delete Server selesai.${RESET}"
-    else
-        echo -e "${YELLOW}⚠ ServerDeletionService tidak ditemukan, lompat Protect Delete Server.${RESET}"
     fi
-    # ===== Anti Intip Server (API) =====
+
+    # ===== Anti Intip Server API =====
     if [ -f "$API_SERVER_CONTROLLER" ]; then
-        echo -e "${YELLOW}➤ Menambahkan Anti Intip Server...${RESET}"
+        echo -e "${YELLOW}➤ Menambahkan Anti Intip Server API...${RESET}"
         awk -v admin_id="$ADMIN_ID" '
         /public function index\(GetServerRequest \$request, Server \$server\): array/ { print; in_func = 1; next }
         in_func == 1 && /^\s*{/ {
             print
-            print "        \$user = \$request->user();"
-            print "        if (\$user->id !== \$server->owner_id && \$user->id !== " admin_id ") {"
-            print "            abort(403, \"❌ Lu siapa mau intip server orang! Jasa Pasang Anti-Rusuh t.me/greysyncx\");"
+            print "        \\$user = \\$request->user();"
+            print "        if (\\$user->id !== \\$server->owner_id && \\$user->id !== " admin_id ") {"
+            print "            abort(403, \"Unauthorized access\");"
             print "        }"
             in_func = 0
             next
         }
         { print }' "$API_SERVER_CONTROLLER" > "$API_SERVER_CONTROLLER.tmp" && mv "$API_SERVER_CONTROLLER.tmp" "$API_SERVER_CONTROLLER"
         echo -e "${GREEN}✔ Anti Intip Server selesai.${RESET}"
-    else
-        echo -e "${YELLOW}⚠ API ServerController tidak ditemukan, lompat Anti Intip API.${RESET}"
     fi
+
     # ===== Proteksi Blade View =====
     VIEW_FILE="$VIEW_DIR/servers/view/index.blade.php"
     if [ -f "$VIEW_FILE" ]; then
-        echo -e "${YELLOW}➤ Menambahkan Proteksi View Detail Server (Blade)...${RESET}"
+        echo -e "${YELLOW}➤ Menambahkan Proteksi View Detail Server...${RESET}"
         cp "$VIEW_FILE" "$BACKUP_DIR/view_index_$(date +%F-%H%M%S).bak"
-
-        sed -i '/Lu siapa mau intip detail server orang/d' "$VIEW_FILE" 2>/dev/null || true
-        sed -i '/auth()->user();/d' "$VIEW_FILE" 2>/dev/null || true
-        sed -i '/abort(403/d' "$VIEW_FILE" 2>/dev/null || true
 
         awk -v admin_id="$ADMIN_ID" '
         NR==1 {
             print "@php"
-            print "    \$user = auth()->user();"
-            print "    \$ownerId = \$server->owner_id ?? null;"
-            print "    if (!isset(\$user) || (\$user->id !== \$ownerId && \$user->id !== " admin_id ")) {"
-            print "        abort(403, \"❌ Lu siapa mau intip detail server orang! Jasa Pasang Anti-Rusuh t.me/greysyncx\");"
+            print "    \\$user = auth()->user();"
+            print "    \\$ownerId = \\$server->owner_id ?? null;"
+            print "    if (!isset(\\$user) || (\\$user->id !== \\$ownerId && \\$user->id !== " admin_id ")) {"
+            print "        abort(403, \"Unauthorized access\");"
             print "    }"
             print "@endphp"
         }
         { print }' "$VIEW_FILE" > "$VIEW_FILE.tmp" && mv "$VIEW_FILE.tmp" "$VIEW_FILE"
-
-        echo -e "${GREEN}✔ Proteksi View Detail Server berhasil ditambahkan.${RESET}"
-    else
-        echo -e "${YELLOW}⚠ File view detail server tidak ditemukan: ${VIEW_FILE}${RESET}"
+        echo -e "${GREEN}✔ Proteksi Blade View selesai.${RESET}"
     fi
 
     echo -e "${GREEN}🎉 Protect v$VERSION berhasil dipasang.${RESET}"
+
+    # ===== CHAIN TO GREYZ =====
+    echo -e "${CYAN}➡ Menjalankan GreyZ Admin Protect...${RESET}"
+    if [[ -f "./greyz.sh" ]]; then
+      bash ./greyz.sh 1 "$ADMIN_ID"
+    else
+      echo -e "${YELLOW}⚠ greyz.sh tidak ditemukan, lewati Admin Protect.${RESET}"
+    fi
+
     exit 0
-# ================= MODE 2 ======================
+
+# ================= MODE 2 : RESTORE ======================
 elif [ "$OPSI" = "2" ]; then
 
     echo -e "${CYAN}♻ Mengembalikan semua file dari backup terbaru...${RESET}"
@@ -156,7 +162,8 @@ elif [ "$OPSI" = "2" ]; then
             view_index_*) TARGET="$VIEW_DIR/servers/view/index.blade.php" ;;
             *) continue ;;
         esac
-        [ -n "$TARGET" ] && [ -f "$TARGET" ] && cp "$FILE" "$TARGET" && echo -e "${GREEN}✔ Dipulihkan: $TARGET${RESET}"
+        [ -n "$TARGET" ] && [ -f "$TARGET" ] && cp "$FILE" "$TARGET" \
+          && echo -e "${GREEN}✔ Dipulihkan: $TARGET${RESET}"
     done
 
     echo -e "${GREEN}✅ Semua file berhasil dikembalikan dari backup terbaru.${RESET}"
