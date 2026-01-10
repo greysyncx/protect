@@ -12,10 +12,19 @@ VERSION="1.5"
 BACKUP_DIR="/root/greysync_backupsx"
 mkdir -p "$BACKUP_DIR"
 
-if [[ "$1" == "install" && -n "$2" ]]; then
+# ==== ARGUMENT MAPPING (BOT & MANUAL) ====
+MENU=""
+ADMIN_ID=""
+
+if [[ "${1:-}" == "1" ]]; then
   MENU="1"
-  ADMIN_ID="$2"
-elif [[ "$1" == "restore" ]]; then
+  ADMIN_ID="${2:-}"
+elif [[ "${1:-}" == "2" ]]; then
+  MENU="2"
+elif [[ "${1:-}" == "install" ]]; then
+  MENU="1"
+  ADMIN_ID="${2:-}"
+elif [[ "${1:-}" == "restore" ]]; then
   MENU="2"
 fi
 
