@@ -122,7 +122,7 @@ if [[ "$MENU" == "1" ]]; then
           print
           print "        // === GreySync Anti Edit Protect (Admin) ==="
           print "        $auth = \$request->user() ?? Auth::user();"
-          print "        if (!\$auth || (\$auth->id !== \$user->id && \$auth->id != " admin_id ")) {"
+          print "        if (!$auth || ($auth->id !== $user->id && $auth->id != " admin_id ")) {"
           print "            return redirect()->back()->withErrors([\"error\" => \"😹 Lu Siapa Mau Edit User Lain? Jasa Pasang Anti-Rusuh t.me/greysyncx\"]);"
           print "        }"
           inserted=1
