@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# ===== BOT SAFE ENV =====
+export TERM=${TERM:-xterm}
+export USER=${USER:-root}
+export HOME=${HOME:-/root}
+
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -28,7 +33,7 @@ elif [[ "${1:-}" == "restore" ]]; then
   MENU="2"
 fi
 
-clear
+[[ -t 1 ]] && clear || true
 echo -e "${CYAN}"
 echo "╔════════════════════════════════════════════════════════╗"
 echo "║              GreySync Protect — Auto Mode v${VERSION}         ║"
