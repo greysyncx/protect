@@ -77,8 +77,8 @@ if [ "$OPSI" = "1" ]; then
         /public function handle\(Server \$server\): void/ { print; in_func = 1; next }
         in_func == 1 && /^\s*{/ {
             print;
-            print "        \$user = Auth::user();";
-            print "        if (\$user && \$user->id !== " admin_id ") {";
+            print "        $user = Auth::user();";
+            print "        if ($user && $user->id !== " admin_id ") {";
             print "            throw new DisplayException(\"🤬 Lu siapa mau hapus server orang?\\nJasa Pasang Anti-Rusuh t.me/greysyncx\");";
             print "        }";
             in_func = 0; next;
@@ -95,8 +95,8 @@ if [ "$OPSI" = "1" ]; then
         /public function index\(GetServerRequest \$request, Server \$server\): array/ { print; in_func = 1; next }
         in_func == 1 && /^\s*{/ {
             print;
-            print "        $user = $request->user();";
-            print "        if ($user->id !== $server->owner_id && $user->id !== " admin_id ") {";
+            print "        \$user = \$request->user();";
+            print "        if (\$user->id !== \$server->owner_id && \$user->id !== " admin_id ") {";
             print "            abort(403, \"❌ Lu siapa mau intip server orang! Jasa Pasang Anti-Rusuh t.me/greysyncx\");";
             print "        }";
             in_func = 0; next;
@@ -116,9 +116,9 @@ if [ "$OPSI" = "1" ]; then
         awk -v admin_id="$ADMIN_ID" '
         NR==1 {
             print "@php";
-            print "    $user = auth()->user();";
-            print "    $ownerId = $server->owner_id ?? null;";
-            print "    if (!isset($user) || ($user->id !== $ownerId && $user->id !== " admin_id ")) {";
+            print "    \$user = auth()->user();";
+            print "    \$ownerId = \$server->owner_id ?? null;";
+            print "    if (!isset(\$user) || (\$user->id !== \$ownerId && \$user->id !== " admin_id ")) {";
             print "        abort(403, \"❌ LU SIAPA MAU INTIP DETAIL SERVER ORANG! JASA PASANG ANTI-RUSUH T.ME/GREYSYNCX\");";
             print "    }";
             print "@endphp";
