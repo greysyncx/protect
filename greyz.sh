@@ -91,7 +91,7 @@ if [[ "$MENU" == "1" ]]; then
           print
           print "        // === GreySync Anti Edit Protect (API) ==="
           print "        $auth = $request->user() ?? Auth::user();"
-          print "        if (!\$auth || (\$auth->id !== \$user->id && \$auth->id != " admin_id ")) {"
+          print "        if (!$auth || ($auth->id !== $user->id && $auth->id != " admin_id ")) {"
           print "            return response()->json([\"error\" => \"😹 Lu Siapa Mau Edit User Lain? Jasa Pasang Anti-Rusuh t.me/greysyncx\"], 403);"
           print "        }"
           inserted=1
@@ -121,7 +121,7 @@ if [[ "$MENU" == "1" ]]; then
         if (/\{/ && inserted==0) {
           print
           print "        // === GreySync Anti Edit Protect (Admin) ==="
-          print "        $auth = \$request->user() ?? Auth::user();"
+          print "        $auth = $request->user() ?? Auth::user();"
           print "        if (!$auth || ($auth->id !== $user->id && $auth->id != " admin_id ")) {"
           print "            return redirect()->back()->withErrors([\"error\" => \"😹 Lu Siapa Mau Edit User Lain? Jasa Pasang Anti-Rusuh t.me/greysyncx\"]);"
           print "        }"
