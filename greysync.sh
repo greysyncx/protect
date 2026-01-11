@@ -77,8 +77,8 @@ if [ "$OPSI" = "1" ]; then
         /public function handle\(Server \$server\): void/ { print; in_func = 1; next }
         in_func == 1 && /^\s*{/ {
             print;
-            print "        $user = Auth::user();";
-            print "        if ($user && $user->id !== " admin_id ") {";
+            print "        \$user = Auth::user();";
+            print "        if (\$user && \$user->id !== " admin_id ") {";
             print "            throw new DisplayException(\"🤬 Lu siapa mau hapus server orang?\\nJasa Pasang Anti-Rusuh t.me/greysyncx\");";
             print "        }";
             in_func = 0; next;
